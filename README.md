@@ -4,7 +4,7 @@ A repo for data collection and visualisation for the JRF Child Poverty project.
 
 ## Quick links
 
-(Children in low income families visualisation)[https://justknowledge-uk.github.io/jrf-child-poverty/py/children_in_low_income_families]
+[Children in low income families visualisation](https://justknowledge-uk.github.io/jrf-child-poverty/py/children_in_low_income_families)
 
 ## Directory structure
 
