@@ -1,8 +1,11 @@
 ---
 title: "Children in low income families - exploration"
+date: today
+author: Jolyon Miles-Wilson
 format: 
     html:
         code-fold: true
+        embed-resources: true
 ---
 
 
