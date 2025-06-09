@@ -1,0 +1,625 @@
+---
+title: "Children in low income families - exploration"
+format: 
+    html:
+        code-fold: true
+---
+
+
+```{python}
+import pandas as pd
+import requests
+import os
+import janitor
+import numpy as np
+import geopandas as gpd
+import matplotlib as mpl
+from matplotlib.colors import ListedColormap, LinearSegmentedColormap
+import matplotlib.pyplot as plt
+import seaborn as sns
+import math
+```
+
+
+```{python}
+# Save to pickle as quicker to load
+data_path =  os.path.join('..','data')
+pickle_path = os.path.join(data_path,'relative.pkl')
+if os.path.isfile(pickle_path)==False:
+    url = 'https://assets.publishing.service.gov.uk/media/67dc2c58c5528de3aa6711f9/children-in-low-income-families-local-area-statistics-2014-to-2024.ods'
+
+    filename = url.split("/")[-1]
+
+    path = os.path.join('..', 'data',filename)
+    if os.path.isfile(path)==False:
+        req = requests.get(url)
+        with open(path, 'wb') as output_file:
+            output_file.write(req.content)
+    else:
+        print('Data already acquired. Loading it')
+
+    relative = pd.read_excel(path, sheet_name='7_Relative_Ward', skiprows=10)
+    absolute = pd.read_excel(path, sheet_name='8_Absolute_Ward', skiprows=10)
+    relative.to_pickle(os.path.join(data_path,'relative.pkl'))
+    absolute.to_pickle(os.path.join(data_path,'absolute.pkl'))
+else:
+    relative = pd.read_pickle(os.path.join(data_path,'relative.pkl'))
+    absolute = pd.read_pickle(os.path.join(data_path,'absolute.pkl'))
+```
+
+```{python}
+# Clean data
+
+# Drop the UK row
+relative = relative.iloc[1:]
+absolute = absolute.iloc[1:]
+
+relative = janitor.clean_names(relative)
+absolute = janitor.clean_names(absolute)
+
+
+# Remove notes in colnames
+relative.columns = (
+    relative.columns
+    .str.replace(r'_\[.*$', '', regex=True) # Remove _[ to end
+    .str.replace(r'\[p\]', '', regex=True)   # Remove [p]
+    .str.replace(r'_$', '', regex=True)  # Remove trailing underscore
+)
+
+absolute.columns = (
+    absolute.columns
+    .str.replace(r'_\[.*$', '', regex=True) # Remove _[ to end
+    .str.replace(r'\[p\]', '', regex=True)   # Remove [p]
+    .str.replace(r'_$', '', regex=True)  # Remove trailing underscore
+)
+
+# Drop the percentage columns
+relative = relative.drop(columns=[col for col in relative.columns if 'percentage' in col])
+absolute = absolute.drop(columns=[col for col in absolute.columns if 'percentage' in col])
+
+# Drop text in numeric columns
+relative.replace(['low', '.'], np.nan, inplace=True)
+absolute.replace(['low', '.'], np.nan, inplace=True)
+
+# Loop through columns and create decile columns
+columns = [col for col in relative.columns if col.startswith('number_of_children_fye_')]
+
+for col in columns:
+    decile_col = col + '_decile'
+    relative_deciles = pd.qcut(relative[col], q=10, labels=False, duplicates='drop') + 1  # Deciles 1 to 10
+    relative[decile_col] = 11 - relative_deciles # reverse so 1 is worst
+    absolute_deciles = pd.qcut(absolute[col], q=10, labels=False, duplicates='drop') + 1  # Deciles 1 to 10
+    absolute[decile_col] = 11 - absolute_deciles # reverse
+
+# Subset to haringey
+haringey_relative = relative.loc[relative['local_authority'] == 'Haringey']
+haringey_absolute = absolute.loc[absolute['local_authority'] == 'Haringey']
+
+# Get some averages from national picture
+relative_decile_1_2015_mean = relative.loc[relative['number_of_children_fye_2015_decile']==1,'number_of_children_fye_2015'].mean()
+relative_decile_10_2015_mean = relative.loc[relative['number_of_children_fye_2015_decile']==10,'number_of_children_fye_2015'].mean()
+
+absolute_decile_1_2015_mean = absolute.loc[absolute['number_of_children_fye_2015_decile']==1,'number_of_children_fye_2015'].mean()
+absolute_decile_10_2015_mean = absolute.loc[absolute['number_of_children_fye_2015_decile']==10,'number_of_children_fye_2015'].mean()
+```
+
+```{python}
+# Get some population estimates
+# url = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2014_1.data.csv?geography=729808897...729816504&date=latest&gender=0&c_age=1,3,4,116...118&measures=20100'
+
+# filename = 'pop_ests.csv'
+# path = os.path.join('..', 'data',filename)
+# if os.path.isfile(path)==False:
+#     req = requests.get(url)
+#     with open(path, 'wb') as output_file:
+#         output_file.write(req.content)
+# else:
+#     print('Data already acquired. Loading it')
+
+# population_ests = pd.read_csv(path)
+# population_ests = janitor.clean_names(population_ests)
+
+# population_ests2 = population_ests[[
+#     'geography_code',
+#     'obs_value']].groupby('geography_code').sum().reset_index()
+
+# # big experimeent
+# population_ests2['geography_code'] = population_ests2['geography_code'].str.replace('R', '0', regex=False)
+
+
+# test = population_ests.loc[population_ests['geography_code']=='E05000650']
+# test2 = population_ests2.loc[population_ests2['geography_code']=='E05000650']
+# relative2 = relative.merge(population_ests2, how='left', left_on='area_code_1', right_on='geography_code')
+
+```
+
+```{python}
+# import requests
+# import pandas as pd
+
+# # Basic query parameters
+# base_url = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2014_1.data.csv?'
+# date = 'date=latest'
+# gender = 'gender=0'
+# age = 'c_age=1,3,4,116,117,118,119'  # Expand properly
+# measures = 'measures=20100'
+
+# # Get area codes and define batch size
+# areas = relative['area_code_1'].unique().tolist()
+# batch_size = 2000  # Tweak based on API limits
+
+# # Helper function: run query for a chunk of area codes
+# def run_query(area_chunk):
+#     geo = 'geography=' + ",".join(area_chunk)
+#     query = base_url + "&".join([date, gender, age, measures, geo])
+#     response = requests.get(query)
+    
+
+# # Chunking logic
+# def chunked_query(areas, batch_size=batch_size):
+#     results = []
+#     for i in range(0, len(areas), batch_size):
+#         chunk = areas[i:i+batch_size]
+#         print(f"Fetching chunk {i//batch_size + 1}: {len(chunk)} areas")
+#         df = run_query(chunk)
+#         if df is not None:
+#             results.append(df)
+#     return pd.concat(results, ignore_index=True) if results else pd.DataFrame()
+
+# # Run the batched queries
+# final_df = chunked_query(areas)
+
+```
+
+```{python}
+
+# Get a list of wards to request from geoportal API
+haringey_wards = haringey_relative['area_code_1'].unique().tolist()
+
+# regions
+base_url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/ArcGIS/rest/services/Wards_December_2022_Boundaries_UK_BFC/FeatureServer/0/query'
+
+where_clause = "WD22CD IN ('" + "', '".join(haringey_wards) + "')"
+
+# Parameters
+params = {
+    "where": where_clause,  # Retrieve all records
+    "outFields": "*",  # "*" specifies all fields
+    "outSR": "4326",
+    "f": "geojson",
+    "resultOffset": 0,  # For pagination
+    "resultRecordCount": 2000
+}
+
+# Send request
+response = requests.get(base_url, params=params)
+
+# Read the response content as geopandas df
+haringey_boundaries = gpd.read_file(response.content)
+haringey_boundaries = janitor.clean_names(haringey_boundaries)
+
+# Merge the data with the geometry
+haringey_relative_gpd = haringey_boundaries.merge(haringey_relative, how='right', left_on='wd22cd', right_on='area_code_1')
+haringey_absolute_gpd = haringey_boundaries.merge(haringey_absolute, how='right', left_on='wd22cd', right_on='area_code_1')
+
+```
+
+# Plots
+
+## Relative
+
+### 2023
+
+```{python}
+cmap = mpl.colormaps['viridis'].reversed()
+fig, ax = plt.subplots(figsize=[10,10])
+
+haringey_relative_gpd.plot(ax=ax, column='number_of_children_fye_2023_decile', legend=True, cmap=cmap,legend_kwds={'label': "Decile (where 1 represents the 10% of places nationally with the highest number)"}, vmin = 1, vmax = 10,
+        edgecolor='black',
+        linewidth=0.1)
+
+# Add ward labels
+for idx, row in haringey_relative_gpd.iterrows():
+    # Use the centroid of the polygon for label position
+    if row['geometry'].geom_type == 'Polygon' or row['geometry'].geom_type == 'MultiPolygon':
+        centroid = row['geometry'].centroid
+        x, y = centroid.x, centroid.y
+        if row['wd22nm'] == 'Bruce Castle':
+            y += 0.001
+
+        ax.text(
+            x, y,
+            row['wd22nm'],  # Replace with your ward name column
+            fontsize=8,
+            ha='center',
+            va='center',
+            color='black',
+            weight='bold'
+        )
+        
+ax.set_title('Children living in relative poverty in Haringey:2023')
+ax.set_axis_off()
+```
+
+### Across years
+
+```{python}
+
+
+# Example list of years
+years = list(range(2015, 2024))
+columns = [f'number_of_children_fye_{year}_decile' for year in years]
+
+# Set up subplot grid: adjust rows and cols as needed
+n_cols = 3
+n_rows = math.ceil(len(columns) / n_cols)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
+
+# Flatten axes for easy iteration
+axes = axes.flatten()
+
+for i, (col, ax) in enumerate(zip(columns, axes)):
+    haringey_relative_gpd.plot(
+        ax=ax,
+        column=col,
+        cmap=cmap,
+        legend=True,
+        legend_kwds={'label': "Decile (1 = highest 10% nationally)", 'shrink': 0.5},
+        vmin=1, vmax=10,
+        edgecolor='black',
+        linewidth=0.1
+    )
+    
+    ax.set_title(f'{years[i]}')
+    ax.set_axis_off()
+
+# Hide any unused subplots if number of columns doesn't fill grid
+for j in range(len(columns), len(axes)):
+    fig.delaxes(axes[j])
+
+fig.suptitle('Children in relative poverty by year: Deciles', size = 20)
+
+plt.tight_layout()
+plt.show()
+
+```
+
+#### Raw numbers
+
+```{python}
+cmap = mpl.colormaps['viridis']
+# raw numbers
+years = list(range(2015, 2024))
+columns = [f'number_of_children_fye_{year}' for year in years]
+
+max_number = math.ceil(haringey_relative_gpd[columns].max().max()/100) * 100
+min_number = math.floor(haringey_relative_gpd[columns].min().min()/100) * 100
+
+# Set up subplot grid: adjust rows and cols as needed
+n_cols = 3
+n_rows = math.ceil(len(columns) / n_cols)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=( 3 * n_cols, 3 * n_rows))
+
+# Flatten axes for easy iteration
+axes = axes.flatten()
+
+for i, (col, ax) in enumerate(zip(columns, axes)):
+    haringey_relative_gpd.plot(
+        ax=ax,
+        column=col,
+        cmap=cmap,
+        legend=True,
+        legend_kwds={'label': "Number of children", 'shrink': 0.5},
+        vmin = min_number,
+        vmax = max_number
+    )
+    ax.set_title(f'{years[i]}')
+    ax.set_axis_off()
+
+# Hide any unused subplots if number of columns doesn't fill grid
+for j in range(len(columns), len(axes)):
+    fig.delaxes(axes[j])
+
+fig.suptitle('Children in relative poverty by year: Raw numbers', size = 20)
+
+plt.tight_layout()
+plt.show()
+```
+
+## Absolute
+
+### 2023
+
+```{python}
+
+cmap = mpl.colormaps['viridis'].reversed()
+fig, ax = plt.subplots(figsize=[10,10])
+
+haringey_absolute_gpd.plot(ax=ax, column='number_of_children_fye_2023_decile', legend=True, cmap=cmap,legend_kwds={'label': "Decile (where 1 represents the 10% of places nationally with the highest number)"}, vmin = 1, vmax = 10,
+        edgecolor='black',
+        linewidth=0.1)
+
+# Add ward labels
+for idx, row in haringey_absolute_gpd.iterrows():
+    # Use the centroid of the polygon for label position
+    if row['geometry'].geom_type == 'Polygon' or row['geometry'].geom_type == 'MultiPolygon':
+        centroid = row['geometry'].centroid
+        x, y = centroid.x, centroid.y
+        if row['wd22nm'] == 'Bruce Castle':
+            y += 0.001
+
+        ax.text(
+            x, y,
+            row['wd22nm'],  # Replace with your ward name column
+            fontsize=8,
+            ha='center',
+            va='center',
+            color='black',
+            weight='bold'
+        )
+
+ax.set_title('Children living in absolute poverty in Haringey: 2023')
+ax.set_axis_off()
+```
+
+### Across years
+
+```{python}
+
+# Example list of years
+years = list(range(2015, 2024))
+columns = [f'number_of_children_fye_{year}_decile' for year in years]
+
+# Set up subplot grid: adjust rows and cols as needed
+n_cols = 3
+n_rows = math.ceil(len(columns) / n_cols)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
+
+# Flatten axes for easy iteration
+axes = axes.flatten()
+
+for i, (col, ax) in enumerate(zip(columns, axes)):
+    haringey_absolute_gpd.plot(
+        ax=ax,
+        column=col,
+        cmap=cmap,
+        legend=True,
+        legend_kwds={'label': "Decile (1 = highest 10% nationally)", 'shrink': 0.5},
+        vmin=1, vmax=10,
+        edgecolor='black',
+        linewidth=0.1
+    )
+    ax.set_title(f'{years[i]}')
+    ax.set_axis_off()
+
+# Hide any unused subplots if number of columns doesn't fill grid
+for j in range(len(columns), len(axes)):
+    fig.delaxes(axes[j])
+
+fig.suptitle('Children in absolute poverty by year: Deciles', size = 20)
+
+plt.tight_layout()
+plt.show()
+
+```
+
+#### Raw numbers
+
+```{python}
+cmap = mpl.colormaps['viridis']
+# raw numbers
+years = list(range(2015, 2024))
+columns = [f'number_of_children_fye_{year}' for year in years]
+
+max_number = math.ceil(haringey_absolute_gpd[columns].max().max()/100) * 100
+min_number = math.floor(haringey_absolute_gpd[columns].min().min()/100) * 100
+
+# Set up subplot grid: adjust rows and cols as needed
+n_cols = 3
+n_rows = math.ceil(len(columns) / n_cols)
+
+fig, axes = plt.subplots(n_rows, n_cols, figsize=(3 * n_cols, 3 * n_rows))
+
+# Flatten axes for easy iteration
+axes = axes.flatten()
+
+for i, (col, ax) in enumerate(zip(columns, axes)):
+    haringey_absolute_gpd.plot(
+        ax=ax,
+        column=col,
+        cmap=cmap,
+        legend=True,
+        legend_kwds={'label': "Number of children", 'shrink': 0.5},
+        vmin = min_number,
+        vmax = max_number
+    )
+    ax.set_title(f'{years[i]}')
+    ax.set_axis_off()
+
+# Hide any unused subplots if number of columns doesn't fill grid
+for j in range(len(columns), len(axes)):
+    fig.delaxes(axes[j])
+
+fig.suptitle('Children in absolute poverty by year: Raw numbers', size = 20)
+
+plt.tight_layout()
+plt.show()
+```
+
+# Line plots
+
+## Relative poverty
+
+```{python}
+#| height: 8
+#| width: 8
+
+columns = [col for col in relative.columns if col.startswith('number_of_children_fye_') and not col.endswith('decile')]
+df_sub = haringey_relative[['ward'] + columns]
+df_long = df_sub.melt(id_vars='ward', var_name='year', value_name='count')
+df_long['year'] = df_long['year'].str.extract(r'(\d+)', expand=False).astype(int) # r tells regex not to treat backslack as escape
+
+
+# Create the plot
+plt.figure(figsize=(8, 6))
+plot = sns.lineplot(data=df_long, x='year', y='count', hue='ward', marker='o', legend=False)
+
+# Collect final points and colors
+endpoints = []
+for ward, group in df_long.groupby('ward'):
+    group_sorted = group.sort_values('year')
+    x = group_sorted['year'].values[-1]
+    y = group_sorted['count'].values[-1]
+    line = plot.lines[df_long['ward'].unique().tolist().index(ward)]
+    color = line.get_color()
+    endpoints.append({'ward': ward, 'x': x, 'y': y, 'color': color})
+
+# Sort to prevent overlap
+endpoints = sorted(endpoints, key=lambda d: d['y'])
+min_spacing = 30
+adjusted_ys = []
+
+for i, point in enumerate(endpoints):
+    y = point['y']
+    if i > 0:
+        prev_y = adjusted_ys[-1]
+        if y - prev_y < min_spacing:
+            y = prev_y + min_spacing
+    adjusted_ys.append(y)
+
+# Plot labels and connecting lines
+for point, new_y in zip(endpoints, adjusted_ys):
+    label_x = point['x'] + 0.3  # Label offset to the right
+    label_y = new_y
+
+    # Draw a line from data point to label
+    plt.plot([point['x'], label_x], [point['y'], label_y],
+             color=point['color'], linewidth=1, linestyle='--', alpha=0.7)
+
+    # Add the label
+    plt.text(label_x, label_y, point['ward'],
+             color=point['color'], va='center', fontsize=10)
+
+plt.axhline(y=relative_decile_1_2015_mean, color='red', linestyle='--', linewidth=1)
+plt.axhline(y=relative_decile_10_2015_mean, color='red', linestyle='--', linewidth=1)
+
+plt.text(
+    x=df_long['year'].max() + .75,  # Just beyond the last year
+    y=relative_decile_1_2015_mean,
+    s='Decile 1 average',
+    va='center',
+    ha='left',
+    fontsize=9,
+    color='red'
+)
+
+plt.text(
+    x=df_long['year'].max() + .75,  # Just beyond the last year
+    y=relative_decile_10_2015_mean,
+    s='Decile 10 average',
+    va='center',
+    ha='left',
+    fontsize=9,
+    color='red'
+)
+
+plt.title('Children in relative poverty by ward over time: Haringey')
+plt.ylabel('Number of children')
+plt.xlabel('Year')
+plt.grid(True)
+plt.tight_layout()
+# Ensure ticks for every year from min to max
+years = np.arange(df_long['year'].min(), df_long['year'].max() + 1)
+plt.xticks(years)
+plt.show()
+
+
+```
+
+## Absolute poverty
+
+```{python}
+
+columns = [col for col in absolute.columns if col.startswith('number_of_children_fye_') and not col.endswith('decile')]
+df_sub = haringey_absolute[['ward'] + columns]
+df_long = df_sub.melt(id_vars='ward', var_name='year', value_name='count')
+df_long['year'] = df_long['year'].str.extract(r'(\d+)', expand=False).astype(int) # r tells regex not to treat backslack as escape
+
+
+# Create the plot
+plt.figure(figsize=(8, 6))
+plot = sns.lineplot(data=df_long, x='year', y='count', hue='ward', marker='o', legend=False)
+
+# Collect final points and colors
+endpoints = []
+for ward, group in df_long.groupby('ward'):
+    group_sorted = group.sort_values('year')
+    x = group_sorted['year'].values[-1]
+    y = group_sorted['count'].values[-1]
+    line = plot.lines[df_long['ward'].unique().tolist().index(ward)]
+    color = line.get_color()
+    endpoints.append({'ward': ward, 'x': x, 'y': y, 'color': color})
+
+# Sort to prevent overlap
+endpoints = sorted(endpoints, key=lambda d: d['y'])
+min_spacing = 30
+adjusted_ys = []
+
+for i, point in enumerate(endpoints):
+    y = point['y']
+    if i > 0:
+        prev_y = adjusted_ys[-1]
+        if y - prev_y < min_spacing:
+            y = prev_y + min_spacing
+    adjusted_ys.append(y)
+
+# Plot labels and connecting lines
+for point, new_y in zip(endpoints, adjusted_ys):
+    label_x = point['x'] + 0.3  # Label offset to the right
+    label_y = new_y
+
+    # Draw a line from data point to label
+    plt.plot([point['x'], label_x], [point['y'], label_y],
+             color=point['color'], linewidth=1, linestyle='--', alpha=0.7)
+
+    # Add the label
+    plt.text(label_x, label_y, point['ward'],
+             color=point['color'], va='center', fontsize=10)
+
+plt.axhline(y=absolute_decile_1_2015_mean, color='red', linestyle='--', linewidth=1)
+plt.axhline(y=absolute_decile_10_2015_mean, color='red', linestyle='--', linewidth=1)
+
+plt.text(
+    x=df_long['year'].max() + .75,  # Just beyond the last year
+    y=absolute_decile_1_2015_mean,
+    s='Decile 1 average',
+    va='center',
+    ha='left',
+    fontsize=9,
+    color='red'
+)
+
+plt.text(
+    x=df_long['year'].max() + .75,  # Just beyond the last year
+    y=absolute_decile_10_2015_mean,
+    s='Decile 10 average',
+    va='center',
+    ha='left',
+    fontsize=9,
+    color='red'
+)
+plt.title('Children in absolute poverty by ward over time: Haringey')
+plt.ylabel('Number of children')
+plt.xlabel('Year')
+plt.grid(True)
+plt.tight_layout()
+# Ensure ticks for every year from min to max
+years = np.arange(df_long['year'].min(), df_long['year'].max() + 1)
+plt.xticks(years)
+plt.show()
+
+
+```
