@@ -388,3 +388,149 @@ points_gdf = points_gdf.to_crs(epsg=27700) # maybe go back to web scraping and r
 # Spatial join to find which polygon each point falls in
 joined = gpd.sjoin(points_gdf, msoa_gdf, how='left', predicate='within')
 ```
+
+
+```{python}
+import geopandas as gpd
+import numpy as np
+from sklearn.neighbors import radius_neighbors_graph
+
+target_msoas = joined['msoa21cd'].unique()
+
+# Calculate centroids
+msoa_gdf['centroid'] = msoa_gdf.geometry.centroid
+coords = np.array([[pt.x, pt.y] for pt in msoa_gdf['centroid']])
+
+# Build index lookup for quick access
+msoa_to_index = {code: idx for idx, code in enumerate(msoa_gdf['msoa21cd'])}
+
+# Filter valid MSOAs from your list
+target_indices = [msoa_to_index[code] for code in target_msoas if code in msoa_to_index]
+
+# Radius in meters
+radius_m = 1000 # 1km
+
+# Build adjacency matrix
+adjacency = radius_neighbors_graph(coords, radius=radius_m, mode='connectivity', include_self=True)
+
+# Create dictionary of neighbors
+neighbors_dict = {}
+
+for idx in target_indices:
+    msoa_code = msoa_gdf.iloc[idx]['msoa21cd']
+    neighbor_indices = adjacency[idx].nonzero()[1]
+    neighbor_codes = msoa_gdf.iloc[neighbor_indices]['msoa21cd'].tolist()
+    neighbors_dict[msoa_code] = neighbor_codes
+
+# Output
+print(neighbors_dict)
+
+
+```
+
+
+```{python}
+# Flatten all neighbor MSOAs into a single list
+all_neighbors = [msoa for neighbors in neighbors_dict.values() for msoa in neighbors]
+
+# Convert to a set to remove duplicates
+unique_neighbors = set(all_neighbors)
+
+neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_neighbors)]
+```
+
+
+```{python}
+# Plot Haringey
+
+haringey = neighbors_gdf.loc[neighbors_gdf['msoa21nm'].str.contains('Haringey')]
+tott = tott.to_crs(epsg=27700)
+
+fig, ax = plt.subplots(figsize=[8,8])
+
+haringey.plot(ax=ax, alpha=0.5)
+tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
+cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
+
+```
+
+a differnet attempt sercheing form the actual satdium
+
+
+```{python}
+
+import numpy as np
+from sklearn.neighbors import BallTree, radius_neighbors_graph
+from scipy.spatial import cKDTree
+
+
+# Get point coordinates (n_targets x 2)
+target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
+
+# Get MSOA centroid coordinates (n_msoas x 2)
+msoa_gdf['centroid'] = msoa_gdf.geometry.centroid
+msoa_coords = np.array([[pt.x, pt.y] for pt in msoa_gdf['centroid']])
+
+# Radius in meters
+radius_m = 1000
+
+# Build KD-tree for fast spatial query
+tree = cKDTree(msoa_coords)
+
+# Query neighbors within radius for each point
+neighbors_dict = {}
+
+for i, point in enumerate(target_coords):
+    indices = tree.query_ball_point(point, r=radius_m)
+    neighbor_codes = msoa_gdf.iloc[indices]['msoa21cd'].tolist()
+    point_id = joined.iloc[i].get('Stadium', f'point_{i}')  # Use a unique ID or fallback
+    neighbors_dict[point_id] = neighbor_codes
+
+
+results = []
+for i, row in joined.iterrows():
+    point_id = row.get('Stadium', f'point_{i}')
+    containing_msoa = row['msoa21cd']  # MSOA containing the point (may be NaN if outside)
+    neighbors = neighbors_dict.get(point_id, [])
+    results.append({
+        'stadium': point_id,
+        'containing_msoa': containing_msoa,
+        'neighboring_msoas': neighbors
+    })
+
+```
+
+
+```{python}
+# Collect all MSOA codes from containing_msoa and neighboring_msoas
+all_msoas = []
+
+for res in results:
+    # Add containing MSOA if it exists and is not None or NaN
+    if res['containing_msoa']:
+        all_msoas.append(res['containing_msoa'])
+    # Add all neighboring MSOAs
+    all_msoas.extend(res['neighboring_msoas'])
+
+# Get unique MSOAs by converting to a set, then back to a list if needed
+unique_msoas = list(set(all_msoas))
+
+# unique_msoas now holds all unique MSOA codes from both categories
+print(unique_msoas)
+
+neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_msoas)]
+```
+
+```{python}
+# Plot Haringey
+
+haringey = neighbors_gdf.loc[neighbors_gdf['msoa21nm'].str.contains('Haringey')]
+tott = tott.to_crs(epsg=27700)
+
+fig, ax = plt.subplots(figsize=[8,8])
+
+haringey.plot(ax=ax, alpha=0.5)
+tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
+cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
+
+```
