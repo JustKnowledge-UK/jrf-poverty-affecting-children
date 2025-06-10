@@ -378,7 +378,6 @@ else:
 
 Use spatial join to locate stadiums in MSOAs
 
-
 ```{python}
 points_gdf = gpd.GeoDataFrame(stadiums_gdf[['Stadium', 'geometry']])
 
@@ -389,73 +388,7 @@ points_gdf = points_gdf.to_crs(epsg=27700) # maybe go back to web scraping and r
 joined = gpd.sjoin(points_gdf, msoa_gdf, how='left', predicate='within')
 ```
 
-
-```{python}
-import geopandas as gpd
-import numpy as np
-from sklearn.neighbors import radius_neighbors_graph
-
-target_msoas = joined['msoa21cd'].unique()
-
-# Calculate centroids
-msoa_gdf['centroid'] = msoa_gdf.geometry.centroid
-coords = np.array([[pt.x, pt.y] for pt in msoa_gdf['centroid']])
-
-# Build index lookup for quick access
-msoa_to_index = {code: idx for idx, code in enumerate(msoa_gdf['msoa21cd'])}
-
-# Filter valid MSOAs from your list
-target_indices = [msoa_to_index[code] for code in target_msoas if code in msoa_to_index]
-
-# Radius in meters
-radius_m = 1000 # 1km
-
-# Build adjacency matrix
-adjacency = radius_neighbors_graph(coords, radius=radius_m, mode='connectivity', include_self=True)
-
-# Create dictionary of neighbors
-neighbors_dict = {}
-
-for idx in target_indices:
-    msoa_code = msoa_gdf.iloc[idx]['msoa21cd']
-    neighbor_indices = adjacency[idx].nonzero()[1]
-    neighbor_codes = msoa_gdf.iloc[neighbor_indices]['msoa21cd'].tolist()
-    neighbors_dict[msoa_code] = neighbor_codes
-
-# Output
-print(neighbors_dict)
-
-
-```
-
-
-```{python}
-# Flatten all neighbor MSOAs into a single list
-all_neighbors = [msoa for neighbors in neighbors_dict.values() for msoa in neighbors]
-
-# Convert to a set to remove duplicates
-unique_neighbors = set(all_neighbors)
-
-neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_neighbors)]
-```
-
-
-```{python}
-# Plot Haringey
-
-haringey = neighbors_gdf.loc[neighbors_gdf['msoa21nm'].str.contains('Haringey')]
-tott = tott.to_crs(epsg=27700)
-
-fig, ax = plt.subplots(figsize=[8,8])
-
-haringey.plot(ax=ax, alpha=0.5)
-tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
-cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
-
-```
-
-a differnet attempt sercheing form the actual satdium
-
+# Finding nearest neighbours
 
 ```{python}
 
