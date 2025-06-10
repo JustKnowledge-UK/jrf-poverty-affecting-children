@@ -153,4 +153,6 @@ plt.tight_layout()
 # Add title with specific positioning
 plt.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
 plt.show()
+
+plt.savefig(os.path.join('..','outputs','deprivation.png'))
 ```
