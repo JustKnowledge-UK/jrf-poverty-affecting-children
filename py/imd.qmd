@@ -1,0 +1,41 @@
+---
+title: "IMD"
+format: html
+---
+
+```{python}
+import psycopg2
+import configparser
+import os
+import requests
+import pandas as pd
+from sqlalchemy import create_engine
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+
+db_params = dict(config['postgresql'])
+
+```
+
+```{python}
+# Read IOD from treehouse
+with psycopg2.connect(**db_params) as con:
+    query = '''SELECT DISTINCT foo.*, loo.lsoa11cd, loo.lad21cd, loo.lad21nm
+                FROM iod_2019 foo
+                LEFT JOIN pcode_census11_lookup loo
+                ON foo.lsoa11cd = loo.lsoa11cd
+                WHERE loo.lad21nm = 'Haringey'
+              
+                '''
+
+    haringey_iod = pd.read_sql(query, con = con)
+```
+
+Next steps:
+
+- Create a vector of the domains of interest
+- Plot the rank of each domain 
+    - Maybe this could be on a scale that positions it within the decile?
+    - Plot across all domains of interest in one plot?
+    - Highlight NP in black with others in grey and higher alpha
