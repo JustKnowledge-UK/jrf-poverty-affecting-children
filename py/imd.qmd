@@ -1,6 +1,10 @@
 ---
 title: "IMD"
-format: html
+format: 
+    html:
+        embed-resource: true
+        code-fold: true
+        warning: false
 ---
 
 ```{python}
@@ -10,6 +14,7 @@ import os
 import requests
 import pandas as pd
 from sqlalchemy import create_engine
+import matplotlib.pyplot as plt
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
@@ -21,7 +26,7 @@ db_params = dict(config['postgresql'])
 ```{python}
 # Read IOD from treehouse
 with psycopg2.connect(**db_params) as con:
-    query = '''SELECT DISTINCT foo.*, loo.lsoa11cd, loo.lad21cd, loo.lad21nm
+    query = '''SELECT DISTINCT foo.*, loo.lad21cd, loo.lad21nm
                 FROM iod_2019 foo
                 LEFT JOIN pcode_census11_lookup loo
                 ON foo.lsoa11cd = loo.lsoa11cd
@@ -30,6 +35,15 @@ with psycopg2.connect(**db_params) as con:
                 '''
 
     haringey_iod = pd.read_sql(query, con = con)
+
+
+haringey_iod.columns = (
+    haringey_iod.columns
+    .str.replace(',', '', regex=True)   # Remove ','
+    .str.replace('index_idaci_','', regex=True) # Remove suffix for income affecting children
+    .str.replace('idaopi_','', regex=True) # Remove suffix for income affecting older people
+)
+
 ```
 
 Next steps:
@@ -39,3 +53,104 @@ Next steps:
     - Maybe this could be on a scale that positions it within the decile?
     - Plot across all domains of interest in one plot?
     - Highlight NP in black with others in grey and higher alpha
+
+
+```{python}
+domains_of_interest = pd.Series([
+    'income',
+    'employment',
+    'education_skills_and_training',
+    'health_deprivation_and_disability',
+    'crime',
+    'barriers_to_housing_and_services',
+    'living_environment',
+    'income_deprivation_affecting_children',
+    'income_deprivation_affecting_older_people',
+    'children_and_young_people_sub-domain',
+    'adult_skills_sub-domain',
+    'geographical_barriers_sub-domain',
+    'wider_barriers_sub-domain',
+    'indoors_sub-domain',
+    'outdoors_sub-domain',
+])
+
+ranks = domains_of_interest.apply(lambda x: x + '_rank').tolist()
+
+haringey_ranks = haringey_iod[['lsoa11cd','lsoa11nm'] + ranks]
+
+haringey_ranks_long = haringey_ranks.melt(
+    id_vars = ['lsoa11nm','lsoa11cd'],
+    value_vars = ranks,
+    var_name = 'domain',
+    value_name = 'rank')
+
+# Clean up domain names (remove '_rank' suffix)
+haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_rank', '')
+```
+
+
+```{python}
+# Or with a more complex function
+def clean_domain_name(domain):
+    return domain.replace('_', ' ').title()
+
+domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
+
+# Apply the mapping to the dataframe
+haringey_ranks_long['clean_domain'] = haringey_ranks_long['domain'].map(domain_dict)
+
+# Specify the Northumberland Park LSOAs
+np_lsoas = ['Haringey 002A','Haringey 002B','Haringey 002C','Haringey 002D']
+
+np_data = haringey_ranks_long[haringey_ranks_long['lsoa11nm'].isin(np_lsoas)]
+not_np_data = haringey_ranks_long[~haringey_ranks_long['lsoa11nm'].isin(np_lsoas)]
+
+# Create color list
+colors = ['black' if lsoa in np_lsoas else 'lightgrey' 
+        for lsoa in haringey_ranks_long['lsoa11nm']]
+
+
+
+# Get the bin edges for deciles
+# Create all ranks obejct
+all_ranks = range(1,32845) # 32844 + 1
+total_ranks = len(all_ranks)
+
+# Calculate decile boundaries (every 10%)
+decile_boundaries = []
+for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
+    boundary_index = int(i * total_ranks / 10)
+    decile_boundaries.append(all_ranks[boundary_index])
+
+# Add in the last edge
+decile_boundaries.append(max(all_ranks))
+
+fig, ax = plt.subplots(figsize=[8,8])
+
+# Plot grey points first (bottom layer)
+ax.scatter(not_np_data['rank'], not_np_data['clean_domain'], c='lightgrey')
+
+# Plot black points second (top layer)
+ax.scatter(np_data['rank'], np_data['clean_domain'], c='black')
+
+# Add vertical lines for decile boundaries
+for i, boundary in enumerate(decile_boundaries):
+    ax.axvline(
+        x=boundary, 
+        color='red', 
+        # linestyle=(0, (5, 10)), 
+        linestyle='dotted', 
+        alpha=0.7)
+    if i < 10:
+        x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
+        ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
+
+ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
+
+plt.figtext(0.4, 0.01, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
+ax.invert_yaxis()
+plt.tight_layout()
+# Add title with specific positioning
+plt.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
+plt.show()
+```
