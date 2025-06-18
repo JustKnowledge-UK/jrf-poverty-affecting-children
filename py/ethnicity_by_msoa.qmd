@@ -1,0 +1,174 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import psycopg2
+import configparser
+import os
+import requests
+import pandas as pd
+import matplotlib.pyplot as plt
+import geopandas as gpd
+import numpy as np
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+
+db_params = dict(config['postgresql'])
+```
+
+```{python}
+# Read ethnicity by LSOA from treehouse
+with psycopg2.connect(**db_params) as con:
+    query = '''SELECT  foo.*, loo.msoa21cd, loo.msoa21nm
+                FROM census21_ethnic_group_by_lsoa foo
+                LEFT JOIN 
+                (SELECT DISTINCT lsoa21cd, lsoa21nm, msoa21cd, msoa21nm, ladnm
+                FROM pcode_census21_lookup) loo
+                ON foo.lsoa21cd = loo.lsoa21cd
+                WHERE loo.ladnm = 'Haringey'
+              
+                '''
+
+    haringey_ethnicity = pd.read_sql(query, con = con)
+    
+    query2 = '''SELECT foo.msoa21cd, foo.geometry
+                FROM msoa21_boundaries foo
+                RIGHT JOIN
+                (SELECT DISTINCT msoa21cd, ladnm 
+                FROM pcode_census21_lookup WHERE ladnm = 'Haringey') loo
+                ON foo.msoa21cd = loo.msoa21cd
+
+    '''
+    msoa_geom = gpd.read_postgis(query2, geom_col='geometry', con=con)
+
+# Sum the LSOAs to get MSOA counts
+haringey_ethnicity2 = haringey_ethnicity.groupby(['msoa21nm','msoa21cd'], as_index=False).sum(numeric_only=True)
+
+# drop unwanted columns
+drop = [
+    'total_all_usual_residents',
+    'asian_asian_british_or_asian_welsh',
+    'black_black_british_black_welsh_caribbean_or_african',
+    'mixed_or_multiple_ethnic_groups',
+    'white',
+    'other_ethnic_group'
+]
+
+haringey_ethnicity2 = haringey_ethnicity2.drop(columns=drop)
+
+ethnicity_cols = haringey_ethnicity2.select_dtypes('number').columns.tolist()
+
+# Create a dictionary mapping old column names to new ones
+rename_dict = dict({
+    'asian_asian_british_or_asian_welsh_bangladeshi':'bangladeshi',
+    'asian_asian_british_or_asian_welsh_chinese':'chinese',
+    'asian_asian_british_or_asian_welsh_indian':'indian',
+    'asian_asian_british_or_asian_welsh_pakistani':'pakistani',
+    'asian_asian_british_or_asian_welsh_other_asian':'other asian',
+    'black_black_british_black_welsh_caribbean_or_african_african':'black african',
+    'black_black_british_black_welsh_caribbean_or_african_caribbean':'black caribbean',
+    'black_black_british_black_welsh_caribbean_or_african_other_blac':'other black',
+    'mixed_or_multiple_ethnic_groups_white_and_asian':'white and asian',
+    'mixed_or_multiple_ethnic_groups_white_and_black_african':'white and black african',
+    'mixed_or_multiple_ethnic_groups_white_and_black_caribbean':'white and black caribbean',
+    'mixed_or_multiple_ethnic_groups_other_mixed_or_multiple_ethnic_':'other mixed ethnic group',
+    'white_english_welsh_scottish_northern_irish_or_british':'white british',
+    'white_irish':'white irish',
+    'white_gypsy_or_irish_traveller':'white gypsy or irish traveller',
+    'white_roma':'white roma',
+    'white_other_white':'other white',
+    'other_ethnic_group_arab':'arab',
+    'other_ethnic_group_any_other_ethnic_group':'other ethnic group'}
+)
+
+
+# Rename only the ethnicity columns in the original dataframe
+haringey_ethnicity2.rename(columns=rename_dict, inplace=True)
+ethnicity_cols2 = haringey_ethnicity2.select_dtypes('number').columns.tolist()
+
+# Create a dictionary mapping old column names to new ones
+rename_dict2 = {col: col.title() for col in ethnicity_cols2}
+haringey_ethnicity2.rename(columns=rename_dict2, inplace=True)
+
+haringey_ethnicity_gdf = msoa_geom.merge(haringey_ethnicity2, how='right', on='msoa21cd')
+```
+
+
+```{python}
+# Function to generate random points inside polygon
+def generate_points_in_polygon(polygon, num_points):
+    min_x, min_y, max_x, max_y = polygon.bounds
+    points = []
+    while len(points) < num_points:
+        random_point = gpd.points_from_xy(
+            np.random.uniform(min_x, max_x, 1),
+            np.random.uniform(min_y, max_y, 1))[0]
+        if polygon.contains(random_point):
+            points.append(random_point)
+    return points
+
+ethnicity_cols = haringey_ethnicity_gdf.select_dtypes('number').columns.tolist()
+
+# Create a list to store all points
+all_points = []
+
+scale = 10 # e.g. 1 dot = 10 people (adjust for scale)
+
+# Loop through each row
+for idx, row in haringey_ethnicity_gdf.iterrows():
+    polygon = row['geometry']
+    for ethnicity in ethnicity_cols:
+        count = row[ethnicity] // scale  # e.g. 1 dot = 10 people (adjust for scale)
+        points = generate_points_in_polygon(polygon, count)
+        for point in points:
+            all_points.append({'geometry': point, 'ethnicity': ethnicity})
+
+# Convert to GeoDataFrame
+points_gdf = gpd.GeoDataFrame(all_points, crs=haringey_ethnicity_gdf.crs)
+
+colours = ['#e6194b', '#3cb44b', '#ffe119', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075']
+
+# Combine into a dictionary
+ethnicity_colour_dict = dict(zip(ethnicity_cols, colours))
+
+# Plot
+fig, ax = plt.subplots(figsize=(15, 20))
+haringey_ethnicity_gdf.boundary.plot(ax=ax, color='grey')
+
+for ethnicity, colour in ethnicity_colour_dict.items():
+    points_gdf[points_gdf['ethnicity'] == ethnicity].plot(
+        ax=ax, color=colour, markersize=1, label=ethnicity)
+
+
+# Create custom legend handles with bigger dots
+legend_handles = [
+    plt.Line2D([0], [0], marker='o', color='w', label=ethnicity,
+               markerfacecolor=colour, markersize=10)
+    for ethnicity, colour in ethnicity_colour_dict.items()
+]
+ax.set_axis_off()
+plt.legend(handles=legend_handles, loc='upper center', bbox_to_anchor=(0.5, -0.1))
+
+plt.title(f"Dot Density Map of Ethnicities by MSOA\nEach dot represents {scale} people")
+plt.show()
+
+fig.savefig(os.path.join('..','outputs','ethnicity_dot_plot.png'), dpi=800)
+```
+
+
+```{python}
+# Select only numeric columns
+numeric_cols = haringey_ethnicity2.select_dtypes(include='number')
+non_numeric_cols = haringey_ethnicity2.select_dtypes(exclude='number')
+# Calculate the sum across numeric columns for each row
+row_sums = numeric_cols.sum(axis=1)
+
+# Divide each numeric column by the row sum (broadcasting on rows)
+haringey_ethnicity3 = pd.concat([non_numeric_cols, numeric_cols.div(row_sums, axis=0)*100], axis=1).round(2)
+
+haringey_ethnicity3.to_csv(os.path.join('..','outputs','ethnicity_table.csv'))
+```
