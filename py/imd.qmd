@@ -125,7 +125,7 @@ for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
 # Add in the last edge
 decile_boundaries.append(max(all_ranks))
 
-fig, ax = plt.subplots(figsize=[8,8])
+fig, ax = plt.subplots(figsize=[9,9])
 
 # Plot grey points first (bottom layer)
 ax.scatter(not_np_data['rank'], not_np_data['clean_domain'], c='lightgrey')
@@ -147,12 +147,13 @@ for i, boundary in enumerate(decile_boundaries):
 
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
 
-plt.figtext(0.4, 0.01, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
+plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 plt.tight_layout()
 # Add title with specific positioning
-plt.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
+fig.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
+fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=300)
 plt.show()
 
-plt.savefig(os.path.join('..','outputs','deprivation.png'))
+
 ```
