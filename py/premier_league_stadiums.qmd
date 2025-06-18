@@ -18,6 +18,10 @@ import configparser
 import psycopg2
 import os
 import pickle
+import numpy as np
+from sklearn.neighbors import BallTree, radius_neighbors_graph
+from scipy.spatial import cKDTree
+import janitor
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
@@ -391,12 +395,6 @@ joined = gpd.sjoin(points_gdf, msoa_gdf, how='left', predicate='within')
 # Finding nearest neighbours
 
 ```{python}
-
-import numpy as np
-from sklearn.neighbors import BallTree, radius_neighbors_graph
-from scipy.spatial import cKDTree
-
-
 # Get point coordinates (n_targets x 2)
 target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
 
@@ -433,37 +431,258 @@ for i, row in joined.iterrows():
 
 ```
 
-
 ```{python}
-# Collect all MSOA codes from containing_msoa and neighboring_msoas
-all_msoas = []
+# Get point coordinates (n_targets x 2)
+target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
 
-for res in results:
-    # Add containing MSOA if it exists and is not None or NaN
-    if res['containing_msoa']:
-        all_msoas.append(res['containing_msoa'])
-    # Add all neighboring MSOAs
-    all_msoas.extend(res['neighboring_msoas'])
+# Radius in meters
+radius_m = 1000
 
-# Get unique MSOAs by converting to a set, then back to a list if needed
-unique_msoas = list(set(all_msoas))
+# Method 1: Using buffer and intersects (Recommended - most accurate)
+neighbors_dict = {}
+for i, row in joined.iterrows():
+    point_geom = row.geometry
+    point_id = row.get('Stadium', f'point_{i}')
+    
+    # Create buffer around the point
+    point_buffer = point_geom.buffer(radius_m)
+    
+    # Find all MSOAs that intersect with the buffer
+    intersecting_msoas = msoa_gdf[msoa_gdf.geometry.intersects(point_buffer)]
+    neighbor_codes = intersecting_msoas['msoa21cd'].tolist()
+    
+    neighbors_dict[point_id] = neighbor_codes
 
-# unique_msoas now holds all unique MSOA codes from both categories
-print(unique_msoas)
+# Alternative Method 2: Using distance calculation (also accurate but potentially slower)
+# Uncomment below if you prefer this approach:
 
-neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_msoas)]
+# neighbors_dict = {}
+# for i, row in joined.iterrows():
+#     point_geom = row.geometry
+#     point_id = row.get('Stadium', f'point_{i}')
+#     
+#     # Calculate distance from point to each MSOA geometry
+#     distances = msoa_gdf.geometry.distance(point_geom)
+#     
+#     # Find MSOAs within the radius
+#     within_radius = distances <= radius_m
+#     neighbor_codes = msoa_gdf[within_radius]['msoa21cd'].tolist()
+#     
+#     neighbors_dict[point_id] = neighbor_codes
+
+# Rest of your code remains the same
+results = []
+for i, row in joined.iterrows():
+    point_id = row.get('Stadium', f'point_{i}')
+    containing_msoa = row['msoa21cd']  # MSOA containing the point (may be NaN if outside)
+    neighbors = neighbors_dict.get(point_id, [])
+    results.append({
+        'stadium': point_id,
+        'containing_msoa': containing_msoa,
+        'neighboring_msoas': neighbors
+    })
 ```
 
 ```{python}
-# Plot Haringey
+# # Collect all MSOA codes from containing_msoa and neighboring_msoas
+# all_msoas = []
 
+# for res in results:
+#     # Add containing MSOA if it exists and is not None or NaN
+#     if res['containing_msoa']:
+#         all_msoas.append(res['containing_msoa'])
+#     # Add all neighboring MSOAs
+#     all_msoas.extend(res['neighboring_msoas'])
+
+# # Get unique MSOAs by converting to a set, then back to a list if needed
+# unique_msoas = list(set(all_msoas))
+
+# # unique_msoas now holds all unique MSOA codes from both categories
+# print(unique_msoas)
+
+# neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_msoas)]
+```
+
+```{python}
+from collections import defaultdict
+# Step 1: Build a mapping from MSOA to associated stadium(s)
+msoa_to_stadiums = defaultdict(set)
+for res in results:
+    stadium = res['stadium']
+    if res['containing_msoa']:
+        msoa_to_stadiums[res['containing_msoa']].add(stadium)
+    for neighbor in res['neighboring_msoas']:
+        # print(neighbor)
+        msoa_to_stadiums[neighbor].add(stadium)
+
+# Step 2: Flatten the mapping into a DataFrame
+msoa_stadium_rows = []
+for msoa, stadiums in msoa_to_stadiums.items():
+    for stadium in stadiums:
+        msoa_stadium_rows.append({
+            'msoa21cd': msoa,
+            'stadium': stadium
+        })
+
+msoa_stadium_df = pd.DataFrame(msoa_stadium_rows)
+
+# Step 3: Join this info with the original MSOA GeoDataFrame
+neighbors_gdf = msoa_gdf.merge(msoa_stadium_df, on='msoa21cd', how='inner')
+```
+
+```{python}
+# Plot Haringey to check
 haringey = neighbors_gdf.loc[neighbors_gdf['msoa21nm'].str.contains('Haringey')]
 tott = tott.to_crs(epsg=27700)
 
 fig, ax = plt.subplots(figsize=[8,8])
 
-haringey.plot(ax=ax, alpha=0.5)
+haringey.plot(ax=ax, alpha=0.5, edgecolor="black")
 tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
 cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
+
+```
+
+# Child poverty data
+
+```{python}
+relative = pd.read_csv(os.path.join('..','data','relative_low_income_msoa.csv'), skiprows=9)
+
+relative = relative.iloc[:,[1,3]]
+relative.columns = ['msoa_name','count']
+
+absolute = pd.read_csv(os.path.join('..','data','absolute_low_income_msoa.csv'), skiprows=9)
+
+absolute = absolute.iloc[:,[1,3]]
+absolute.columns = ['msoa_name','count']
+```
+
+```{python}
+# Get population estimates by age (thank you Ollie for having this in db!)
+
+with psycopg2.connect(**db_params) as con:
+    query = '''
+            SELECT msoa21nm, msoa21cd, SUM(count) AS population
+            FROM census21_msoa_population_by_age 
+            WHERE age < 18
+            GROUP BY msoa21nm, msoa21cd
+    '''
+    pop_ests = pd.read_sql(query, con=con)
+
+
+```
+
+
+```{python}
+# Join pop ests to CILIF data
+# Relative
+relative2 = (relative
+            .merge(pop_ests, how = 'left', left_on='msoa_name', right_on='msoa21nm')
+            .drop(columns='msoa_name')
+)
+
+# Move count to a better location
+cols = list(relative2.columns)
+cols.remove('count')
+insert_at = cols.index('population')
+cols.insert(insert_at, 'count')
+
+relative2 = relative2[cols]
+
+relative2['percentage'] = relative2['count'].div(relative2['population'])*100
+relative2['decile'] = pd.qcut(relative2['percentage'], q=10, labels=list(range(10,0,-1)), duplicates='drop')
+relative2['decile'] = pd.to_numeric(relative2['decile'], errors='coerce')
+
+# Absolute
+absolute2 = (absolute
+            .merge(pop_ests, how = 'left', left_on='msoa_name', right_on='msoa21nm')
+            .drop(columns='msoa_name')
+)
+
+# Move count to a better location
+cols = list(absolute2.columns)
+cols.remove('count')
+insert_at = cols.index('population')
+cols.insert(insert_at, 'count')
+
+absolute2 = absolute2[cols]
+
+absolute2['percentage'] = absolute2['count'].div(absolute2['population'])*100
+absolute2['decile'] = pd.qcut(absolute2['percentage'], q=10, labels=list(range(10,0,-1)), duplicates='drop') 
+absolute2['decile'] = pd.to_numeric(absolute2['decile'], errors='coerce')
+
+```
+
+# Join neighbours with CILIF
+
+```{python}
+neighbors_gdf2 = (neighbors_gdf
+                  .merge(relative2.loc[:,['msoa21nm','percentage','decile']], how='left', on='msoa21nm')
+                  .rename(columns={
+                    'percentage':'relative_percentage',
+                    'decile': 'relative_decile'})
+                  .merge(absolute2.loc[:,['msoa21nm','percentage','decile']], how='left', on='msoa21nm')
+                  .rename(columns={
+                    'percentage':'absolute_percentage',
+                    'decile': 'absolute_decile'})
+                  .sort_values(by='msoa21nm')
+)
+```
+
+
+```{python}
+stadiums_gdf2 = stadiums_gdf.to_crs(epsg=27700)
+temp = neighbors_gdf.loc[neighbors_gdf['stadium'].isin(['Anfield', 'Tottenham Hotspur Stadium'])]
+# for stadium in temp['stadium'].unique():
+for stadium in neighbors_gdf2['stadium'].unique():
+    # print(stadium)
+
+    msoa_temp_gdf = neighbors_gdf2.loc[neighbors_gdf2['stadium']==stadium]
+    stadiums_temp_gdf = stadiums_gdf2.loc[stadiums_gdf2['Stadium']==stadium]
+
+    fig, ax = plt.subplots(figsize=[8,8])
+    msoa_temp_gdf.plot(ax=ax,column='relative_decile', edgecolor="black", legend = True,
+    legend_kwds={'label': 'Decile'}, 
+    vmin=1, vmax=10,
+    alpha = 0.5)
+    stadiums_temp_gdf.plot(ax=ax, color="red")
+    plt.title(stadium)
+    cx.add_basemap(ax, crs = msoa_temp_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+    ax.set_axis_off()
+
+
+```
+
+
+```{python}
+decile_boundaries = relative2['percentage'].quantile([i/10 for i in range(0, 11)]).tolist()
+
+neighbors_gdf2.loc[neighbors_gdf2['msoa21nm'].str.contains('Northumberland')]
+fig, ax = plt.subplots(figsize=[9,9])
+
+# Plot grey points first (bottom layer)
+ax.scatter(neighbors_gdf2['relative_percentage'], neighbors_gdf2['stadium'], c='black')
+
+# Add vertical lines for decile boundaries
+for i, boundary in enumerate(decile_boundaries):
+    ax.axvline(
+        x=boundary, 
+        color='red', 
+        # linestyle=(0, (5, 10)), 
+        linestyle='dotted', 
+        alpha=0.7)
+    if i < 10:
+        x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
+        ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
+
+ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
+
+# plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
+ax.invert_yaxis()
+plt.tight_layout()
+# Add title with specific positioning
+fig.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
+fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=300)
+plt.show()
 
 ```
