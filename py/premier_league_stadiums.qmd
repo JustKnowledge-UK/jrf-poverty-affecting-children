@@ -564,7 +564,7 @@ with psycopg2.connect(**db_params) as con:
     query = '''
             SELECT msoa21nm, msoa21cd, SUM(count) AS population
             FROM census21_msoa_population_by_age 
-            WHERE age < 18
+            WHERE age < 20
             GROUP BY msoa21nm, msoa21cd
     '''
     pop_ests = pd.read_sql(query, con=con)
@@ -684,5 +684,27 @@ plt.tight_layout()
 fig.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
 fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=300)
 plt.show()
+
+```
+
+Maybe rank above instead? could be nicer way of looking at it
+
+grey out non tottenham
+
+highlight northumberland park msoa
+
+
+An MSOA in Middlesbrough has a child poverty rate higher than the child population. how the heck is this possible? Yeah it seems liek this is really deprived place - 40% of households are deprived in one dimension (https://www.ons.gov.uk/census/maps/choropleth/population/household-deprivation/hh-deprivation/household-is-deprived-in-one-dimension?geoLock=msoa&msoa=E02002498)
+
+It is also the case that the child pvoerty data includes children up to 19 years of age whereas teh population estimates i've used are under 18. maybe this adjustment alone will help the percnetages make more sense. making this change does indeed prevenet percentages > 100 thankfully
+
+More generally I think we need to decide what age groups to focus on.
+
+
+```{python}
+# investigate the high percentage areas
+subset = relative2.loc[relative2['percentage']>100]
+
+subset = relative2.loc[relative2['msoa21nm']=="Middlesbrough 003"]
 
 ```
