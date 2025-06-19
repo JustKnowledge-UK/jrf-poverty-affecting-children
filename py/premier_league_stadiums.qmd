@@ -532,7 +532,7 @@ neighbors_gdf = msoa_gdf.merge(msoa_stadium_df, on='msoa21cd', how='inner')
 
 ```{python}
 # Plot Haringey to check
-haringey = neighbors_gdf.loc[neighbors_gdf['msoa21nm'].str.contains('Haringey')]
+haringey = neighbors_gdf.loc[neighbors_gdf['stadium'].str.contains('Tottenham')]
 tott = tott.to_crs(epsg=27700)
 
 fig, ax = plt.subplots(figsize=[8,8])
@@ -546,10 +546,10 @@ cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
 # Child poverty data
 
 ```{python}
-relative = pd.read_csv(os.path.join('..','data','relative_low_income_msoa.csv'), skiprows=9)
+relative = pd.read_csv(os.path.join('..','data','relative_england_wales_msoa_23-24_codes.csv'), skiprows=9, skipfooter=15)
 
 relative = relative.iloc[:,[1,3]]
-relative.columns = ['msoa_name','count']
+relative.columns = ['msoa_code','count']
 
 absolute = pd.read_csv(os.path.join('..','data','absolute_low_income_msoa.csv'), skiprows=9)
 
@@ -572,13 +572,121 @@ with psycopg2.connect(**db_params) as con:
 
 ```
 
+```{python}
+
+# Get MSOA11 to MSOA21 lookup
+import time
+
+def fetch_data(base_url, where_clause, result_offset, max_records):
+    params = {
+        'where': where_clause,
+        'outFields': '*',
+        'outSR': '4326',
+        'f': 'json',
+        'resultOffset': result_offset,
+        'resultRecordCount': max_records
+    }
+
+    response = requests.get(base_url, params=params)
+    error_504 = False
+
+    if len(response.content) < 1000:
+        peek_content = response.text
+        if "error" in peek_content.lower() and "504" in peek_content:
+            error_504 = True
+
+    if response.status_code == 200 and not error_504:
+        return response
+    else:
+        raise Exception(f"Error: Status code {response.status_code} (body may contain 504)")
+
+# Main loop
+
+api_endpoint = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/ArcGIS/rest/services/MSOA11_MSOA21_LAD22_EW_LU_v2/FeatureServer/0/query'
+
+rep = 1
+where_clause = '1=1'
+result_offset = 0
+max_records = 2000
+max_tries = 5
+all_results = []
+
+while True:
+    print(f"\nStarting page {rep}")
+    attempt = 1
+    current_max_records = max_records
+
+    while attempt <= max_tries:
+        print(f"\nAttempt {attempt}")
+        print(f"Trying with max records = {current_max_records}")
+
+        try:
+            response = fetch_data(
+                base_url=api_endpoint,
+                where_clause=where_clause,
+                result_offset=result_offset,
+                max_records=current_max_records
+            )
+            print(f"\nSuccess with max records = {current_max_records}")
+            break
+
+        except Exception as e:
+            print(f"Error: {e}")
+            attempt += 1
+            current_max_records = int(current_max_records / 2)
+            print("Retrying...")
+            time.sleep(1)
+
+    if attempt > max_tries:
+        print("Max attempts reached. Exiting...")
+        break
+
+    json_data = response.json()
+    features = json_data.get('features', [])
+
+    if not features:
+        break
+
+    # Extract attributes only
+    records = [f['attributes'] for f in features]
+    df_chunk = pd.DataFrame(records)
+
+    if df_chunk.empty:
+        break
+
+    all_results.append(df_chunk)
+    result_offset += len(df_chunk)
+    rep += 1
+
+# Concatenate all chunks into a single pandas DataFrame
+if all_results:
+    lookup = pd.concat(all_results, ignore_index=True)
+    print(final_result.head())
+
+lookup = janitor.clean_names(lookup)
+
+```
+
+```{python}
+# crosswalk data to msoa21
+# I'm not 100% sure this is the best way to do this
+# It only takes account where msoa11s have merged to msoa21s.
+# Doesn't take account where msoa11s have split into msoa21s?
+# There are still 122 msoas in CILIF that don't carry over in the merge
+# Must be due to splits?
+relative2 = relative.merge(lookup, how='left', left_on='msoa_code', right_on='msoa11cd')
+
+relative2 = relative2.groupby(['msoa21cd'])['count'].sum()
+# result = relative2.groupby('msoa21cd', as_index=False).agg({'count': 'sum'})
+
+```
 
 ```{python}
 # Join pop ests to CILIF data
 # Relative
 relative2 = (relative
-            .merge(pop_ests, how = 'left', left_on='msoa_name', right_on='msoa21nm')
-            .drop(columns='msoa_name')
+            .merge(pop_ests, how = 'left', left_on='msoa_code', right_on='msoa21cd')
+            # .drop(columns='msoa_code')
 )
 
 # Move count to a better location
@@ -590,7 +698,8 @@ cols.insert(insert_at, 'count')
 relative2 = relative2[cols]
 
 relative2['percentage'] = relative2['count'].div(relative2['population'])*100
-relative2['decile'] = pd.qcut(relative2['percentage'], q=10, labels=list(range(10,0,-1)), duplicates='drop')
+relative2['rank'] = relative2['percentage'].rank(method='min', ascending=False)
+relative2['decile'] = pd.qcut(relative2['rank'], q=10, labels=list(range(1,11,1)), duplicates='drop')
 relative2['decile'] = pd.to_numeric(relative2['decile'], errors='coerce')
 
 # Absolute
@@ -608,7 +717,8 @@ cols.insert(insert_at, 'count')
 absolute2 = absolute2[cols]
 
 absolute2['percentage'] = absolute2['count'].div(absolute2['population'])*100
-absolute2['decile'] = pd.qcut(absolute2['percentage'], q=10, labels=list(range(10,0,-1)), duplicates='drop') 
+absolute2['rank'] = absolute2['percentage'].rank(method='min')
+absolute2['decile'] = pd.qcut(absolute2['percentage'], q=10, labels=list(range(10,0,-1)), duplicates='drop')
 absolute2['decile'] = pd.to_numeric(absolute2['decile'], errors='coerce')
 
 ```
@@ -617,13 +727,16 @@ absolute2['decile'] = pd.to_numeric(absolute2['decile'], errors='coerce')
 
 ```{python}
 neighbors_gdf2 = (neighbors_gdf
-                  .merge(relative2.loc[:,['msoa21nm','percentage','decile']], how='left', on='msoa21nm')
+                  .merge(relative2.loc[:,['msoa21nm','percentage','rank','decile']], how='left', on='msoa21nm')
                   .rename(columns={
                     'percentage':'relative_percentage',
-                    'decile': 'relative_decile'})
-                  .merge(absolute2.loc[:,['msoa21nm','percentage','decile']], how='left', on='msoa21nm')
+                    'rank': 'relative_rank',
+                    'decile': 'relative_decile'
+                    })
+                  .merge(absolute2.loc[:,['msoa21nm','percentage','rank','decile']], how='left', on='msoa21nm')
                   .rename(columns={
                     'percentage':'absolute_percentage',
+                    'rank': 'absolute_rank',
                     'decile': 'absolute_decile'})
                   .sort_values(by='msoa21nm')
 )
@@ -653,15 +766,24 @@ for stadium in neighbors_gdf2['stadium'].unique():
 
 ```
 
+why does tott have 8 points here? in data there are only six
+    - resolved. there were always 8 it's just preivously i was only plotting the haringey ones
 
 ```{python}
-decile_boundaries = relative2['percentage'].quantile([i/10 for i in range(0, 11)]).tolist()
+# use relative2 because this is all MSOAs
+decile_boundaries = relative2['rank'].quantile([i/10 for i in range(0, 11)]).tolist()
 
-neighbors_gdf2.loc[neighbors_gdf2['msoa21nm'].str.contains('Northumberland')]
+tott_dots = neighbors_gdf2.loc[neighbors_gdf2['stadium']=='Tottenham Hotspur Stadium']
+np_dots = neighbors_gdf2.loc[neighbors_gdf2['msoa21cd']=='E02000398']
+non_tott_dots = neighbors_gdf2.loc[neighbors_gdf2['stadium'] !='Tottenham Hotspur Stadium']
+
 fig, ax = plt.subplots(figsize=[9,9])
 
 # Plot grey points first (bottom layer)
-ax.scatter(neighbors_gdf2['relative_percentage'], neighbors_gdf2['stadium'], c='black')
+
+ax.scatter(tott_dots['relative_rank'], tott_dots['stadium'], c='black')
+ax.scatter(non_tott_dots['relative_rank'], non_tott_dots['stadium'], c='lightgrey')
+ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c='red')
 
 # Add vertical lines for decile boundaries
 for i, boundary in enumerate(decile_boundaries):
@@ -676,14 +798,21 @@ for i, boundary in enumerate(decile_boundaries):
         ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
 
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
+ax.text(0, ax.get_ylim()[1]*1.1, s='Red dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium', size=8)
 
 # plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 plt.tight_layout()
+plt.xlabel('Rank')
 # Add title with specific positioning
-fig.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
-fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=300)
+plt.suptitle(
+    'MSOAs within 1km of a Stadium', fontsize=14, 
+    x = 0.7, y=1.03, 
+    ha='center')  # y controls vertical position
+fig.savefig(os.path.join('..','outputs','stadiums_1km.png'), dpi=800)
 plt.show()
+
+
 
 ```
 
@@ -706,5 +835,48 @@ More generally I think we need to decide what age groups to focus on.
 subset = relative2.loc[relative2['percentage']>100]
 
 subset = relative2.loc[relative2['msoa21nm']=="Middlesbrough 003"]
+
+```
+
+CILIF data is using 2011 MSOAs
+
+population estimates are using 2021 MSOAs
+
+cam we get pop ests in 2011 units?
+
+or we look up 2011 pop ests to 2021s
+
+
+```{python}
+# Plot Tottenham agani with deciles this time
+
+haringey = neighbors_gdf2.loc[neighbors_gdf2['stadium'].str.contains('Tottenham')]
+tott = tott.to_crs(epsg=27700)
+north_park = neighbors_gdf2.loc[neighbors_gdf2['msoa21cd']=='E02000398']
+np_centroid = north_park['geometry'].centroid
+x, y = np_centroid.x, np_centroid.y
+np_rank = north_park['relative_rank'].values[0]
+max_rank = int(relative2['rank'].max())
+np_decile = north_park['relative_decile'].values[0]
+
+fig, ax = plt.subplots(figsize=[8,8])
+
+# Plot deciles
+haringey.plot(
+    column='relative_decile', 
+    legend=True, legend_kwds={'label':'Decile'}, vmax = 10, vmin = 1,
+    ax=ax, alpha=0.5, edgecolor="black")
+
+# Plot stadium
+tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
+
+# Titles etc.
+plt.title('Child poverty in MSOAs within 1km of Tottenham Hotspur Stadium')
+ax.text(x=x, y=y, s='Northumberland Park\nRank: '+ str(int(np_rank)) + '/' + str(max_rank) + '\nDecile: ' + str(int(np_decile)), ha='center', va='center', color='white')
+ax.text(x=ax.get_xlim()[0],y=ax.get_ylim()[0]-150, s='Red dot indicates Tottenham Hotspur Stadium')
+cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
+ax.set_axis_off()
+
+fig.savefig(os.path.join('..','outputs','tott_hs_1km_map.png'), dpi=800)
 
 ```
