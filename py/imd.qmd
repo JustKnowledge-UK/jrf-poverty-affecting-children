@@ -23,26 +23,96 @@ db_params = dict(config['postgresql'])
 
 ```
 
+# Alternative approach crosswalking to MSOA
+
 ```{python}
 # Read IOD from treehouse
 with psycopg2.connect(**db_params) as con:
-    query = '''SELECT DISTINCT foo.*, loo.lad21cd, loo.lad21nm
-                FROM iod_2019 foo
-                LEFT JOIN pcode_census11_lookup loo
-                ON foo.lsoa11cd = loo.lsoa11cd
-                WHERE loo.lad21nm = 'Haringey'
-              
+    query = '''SELECT *
+                FROM iod_2019
                 '''
 
-    haringey_iod = pd.read_sql(query, con = con)
+    iod = pd.read_sql(query, con = con)
 
+    query2 = '''SELECT DISTINCT lsoa11cd, msoa11cd, lad21nm
+            FROM pcode_census11_lookup
+        '''
+    lookup = pd.read_sql(query2, con = con)
 
-haringey_iod.columns = (
-    haringey_iod.columns
+    query3 = '''SELECT lsoa11cd, population 
+                FROM population_lsoa
+            '''
+
+    pop = pd.read_sql(query3, con=con)
+
+iod.columns = (
+    iod.columns
     .str.replace(',', '', regex=True)   # Remove ','
     .str.replace('index_idaci_','', regex=True) # Remove suffix for income affecting children
     .str.replace('idaopi_','', regex=True) # Remove suffix for income affecting older people
 )
+
+```
+
+```{python}
+# Aggregate scores up to msoa
+iod = (iod
+    .merge(lookup, how='left',on='lsoa11cd')
+    .merge(pop, how='left', on='lsoa11cd')
+)
+cols = iod.columns[iod.columns.str.contains('score')]
+
+iod2 = iod.copy()
+
+# Multiply each score by population
+for col in cols:
+    iod2[col + '_weighted'] = iod2[col] * iod2['population']
+
+# Group by MSOA and sum the weighted scores and population
+grouped = iod2.groupby(['msoa11cd','lad21nm']).agg(
+    {col + '_weighted': 'sum' for col in cols} |
+    {'population': 'sum'}
+).reset_index()
+
+
+# Calculate weighted average, rank, and decile
+for col in cols:
+    avg_col = col + '_weighted_avg'
+    rank_col = col + '_rank'
+    decile_col = col + '_decile'
+
+    grouped[avg_col] = grouped[col + '_weighted'] / grouped['population']
+    grouped[rank_col] = grouped[avg_col].rank(method='min', ascending=False)
+    grouped[decile_col] = pd.qcut(grouped[rank_col], q=10, labels=range(1, 11), duplicates='drop')
+
+# Select final columns to keep
+iod_msoa = grouped[['msoa11cd', 'lad21nm'] + 
+                   [col + suffix for col in cols for suffix in ['_weighted_avg', '_rank', '_decile']]]
+
+
+```
+```{python}
+# Read IOD from treehouse
+# with psycopg2.connect(**db_params) as con:
+#     query = '''SELECT DISTINCT foo.*, loo.lad21cd, loo.lad21nm, loo.msoa11cd
+#                 FROM iod_2019 foo
+#                 LEFT JOIN pcode_census11_lookup loo
+#                 ON foo.lsoa11cd = loo.lsoa11cd
+#                 WHERE loo.lad21nm = 'Haringey'
+              
+#                 '''
+
+#     haringey_iod = pd.read_sql(query, con = con)
+
+
+
+
+# haringey_iod.columns = (
+#     haringey_iod.columns
+#     .str.replace(',', '', regex=True)   # Remove ','
+#     .str.replace('index_idaci_','', regex=True) # Remove suffix for income affecting children
+#     .str.replace('idaopi_','', regex=True) # Remove suffix for income affecting older people
+# )
 
 ```
 
@@ -56,40 +126,53 @@ Next steps:
 
 
 ```{python}
-domains_of_interest = pd.Series([
+import re
+
+domains_of_interest = [
     'income',
     'employment',
     'education_skills_and_training',
-    'health_deprivation_and_disability',
+    # 'health_deprivation_and_disability',
     'crime',
     'barriers_to_housing_and_services',
-    'living_environment',
+    # 'living_environment',
     'income_deprivation_affecting_children',
-    'income_deprivation_affecting_older_people',
-    'children_and_young_people_sub-domain',
-    'adult_skills_sub-domain',
-    'geographical_barriers_sub-domain',
-    'wider_barriers_sub-domain',
-    'indoors_sub-domain',
-    'outdoors_sub-domain',
-])
+    # 'income_deprivation_affecting_older_people',
+    # 'children_and_young_people_sub-domain',
+    # 'adult_skills_sub-domain',
+    # 'geographical_barriers_sub-domain',
+    # 'wider_barriers_sub-domain',
+    # 'indoors_sub-domain',
+    # 'outdoors_sub-domain',
+]
 
-ranks = domains_of_interest.apply(lambda x: x + '_rank').tolist()
 
-haringey_ranks = haringey_iod[['lsoa11cd','lsoa11nm'] + ranks]
+rank_cols = [
+    col for col in iod_msoa.columns
+    if 'rank' in col
+    and any(domain in col for domain in domains_of_interest)
+    and 'older' not in col
+]
+
+
+iod_msoa_ranks = iod_msoa[['msoa11cd','lad21nm'] + rank_cols]
+
+haringey_ranks = iod_msoa_ranks[iod_msoa_ranks['lad21nm']=='Haringey']
 
 haringey_ranks_long = haringey_ranks.melt(
-    id_vars = ['lsoa11nm','lsoa11cd'],
-    value_vars = ranks,
+    id_vars = 'msoa11cd',
+    value_vars = rank_cols,
     var_name = 'domain',
     value_name = 'rank')
 
 # Clean up domain names (remove '_rank' suffix)
-haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_rank', '')
+haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rate_rank', '')
+haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rank', '')
 ```
 
 
 ```{python}
+domains_of_interest = haringey_ranks_long['domain'].unique()
 # Or with a more complex function
 def clean_domain_name(domain):
     return domain.replace('_', ' ').title()
@@ -99,21 +182,21 @@ domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_intere
 # Apply the mapping to the dataframe
 haringey_ranks_long['clean_domain'] = haringey_ranks_long['domain'].map(domain_dict)
 
-# Specify the Northumberland Park LSOAs
-np_lsoas = ['Haringey 002A','Haringey 002B','Haringey 002C','Haringey 002D']
+# Specify the Northumberland Park MSOA
+np_msoas = ['E02000398']
 
-np_data = haringey_ranks_long[haringey_ranks_long['lsoa11nm'].isin(np_lsoas)]
-not_np_data = haringey_ranks_long[~haringey_ranks_long['lsoa11nm'].isin(np_lsoas)]
+np_data = haringey_ranks_long[haringey_ranks_long['msoa11cd'].isin(np_msoas)]
+not_np_data = haringey_ranks_long[~haringey_ranks_long['msoa11cd'].isin(np_msoas)]
 
 # Create color list
-colors = ['black' if lsoa in np_lsoas else 'lightgrey' 
-        for lsoa in haringey_ranks_long['lsoa11nm']]
+colors = ['black' if msoa in np_msoas else 'lightgrey' 
+        for msoa in haringey_ranks_long['msoa11cd']]
 
-
+max_rank = int(iod_msoa_ranks[rank_cols].max().max())
 
 # Get the bin edges for deciles
 # Create all ranks obejct
-all_ranks = range(1,32845) # 32844 + 1
+all_ranks = range(1,max_rank) # 32844 + 1
 total_ranks = len(all_ranks)
 
 # Calculate decile boundaries (every 10%)
@@ -145,15 +228,16 @@ for i, boundary in enumerate(decile_boundaries):
         x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
         ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
 
+plt.xlabel('Rank')
+
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
 
-plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
+ax.text(x=ax.get_xlim()[1], y=ax.get_ylim()[1]*1.1, s='Black dots indicate Northumberland Park\nGrey dots represent other areas in Haringey', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 plt.tight_layout()
 # Add title with specific positioning
-fig.suptitle('Deprivation in Haringey', fontsize=14, x = 0.7, y=1.03, ha='center')  # y controls vertical position
-fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=300)
+plt.title('Deprivation in Haringey', fontsize=14, x=0, y=1.05, ha='left')  # y controls vertical position
 plt.show()
 
-
+fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=800)
 ```
