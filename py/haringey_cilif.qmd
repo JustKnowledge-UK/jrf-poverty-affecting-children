@@ -1,0 +1,74 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import re
+import geopandas as gpd
+from shapely.geometry import Point
+import matplotlib.pyplot as plt
+import contextily as cx
+from adjustText import adjust_text
+import configparser
+import psycopg2
+import os
+import pickle
+import numpy as np
+from sklearn.neighbors import BallTree, radius_neighbors_graph
+from scipy.spatial import cKDTree
+import janitor
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+
+db_params = dict(config['postgresql'])
+```
+
+
+```{python}
+with psycopg2.connect(**db_params) as con:
+    query = '''SELECT *
+                FROM east_coast_mainline_geometry
+                '''
+
+    trainline = gpd.read_postgis(query, con = con, geom_col='geometry')
+
+    query2 = '''SELECT lad21nm, geometry 
+                FROM lad21_boundaries 
+                WHERE lad21nm = 'Haringey'
+            '''
+    haringey_gpd = gpd.read_postgis(query2, con = con, geom_col='geometry')
+
+    
+    query3 = '''SELECT *
+                FROM railway_track_locations
+                '''
+            
+    all_trainline = gpd.read_postgis(query3, con = con, geom_col='geometry')
+                
+```
+
+
+Strange that the rail isn't perfectly aligned. Think this is as close as I'll get for now
+
+Next add in CILIF data
+
+```{python}
+ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
+ecm = ecm.to_crs(haringey_gpd.crs)
+# Clip ECM geometries to Haringey
+ecm_clipped = gpd.clip(ecm, haringey_gpd)
+# all_trainline.crs = haringey_gpd.crs
+# all_rail_clipped = gpd.clip(all_trainline, haringey_gpd)
+
+fig, ax = plt.subplots(1,1, figsize=[8,8])
+
+haringey_gpd.boundary.plot(ax=ax)
+# ecm_clipped.plot(ax=ax, color = 'red')
+ecm_clipped.plot(ax=ax, color = 'red')
+cx.add_basemap(ax, crs = haringey_gpd.crs, source=cx.providers.OpenStreetMap.Mapnik)
+```
