@@ -874,6 +874,8 @@ with psycopg2.connect(**db_params) as con:
 relative3 = relative2.merge(msoa_lad_lookup, how='left', on='msoa21cd')
 ```
 
+# All stadia
+
 ```{python}
 # use relative2 because this is all MSOAs
 decile_boundaries = relative2['rank'].quantile([i/10 for i in range(0, 11)]).tolist()
@@ -914,6 +916,20 @@ for i, boundary in enumerate(decile_boundaries):
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
 ax.text(0, ax.get_ylim()[1]*1.1, s='Red dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium\nBlue diamonds indicate the average rank of the borough the Stadium is in', size=8)
 
+# Get the mapping from stadium names to y-axis positions
+nudge_x = 0
+nudge_y = -0.3
+y_labels = ax.get_yticklabels()
+y_positions = ax.get_yticks()
+label_mapping = {label.get_text(): pos for label, pos in zip(y_labels, y_positions)}
+
+for i, row in la_avg_ranks.iterrows():
+    if row['Stadium'] in label_mapping:
+        y_pos = label_mapping[row['Stadium']]
+        ax.text(x=row['average_rank'] + nudge_x, 
+                y=y_pos + nudge_y, 
+                s=row['ladnm'], ha='left')
+
 # plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 
@@ -924,11 +940,13 @@ plt.suptitle(
     x = 0.7, y=.99, 
     ha='center')  # y controls vertical position
 plt.tight_layout()
-fig.savefig(os.path.join('..','outputs','all_stadiums_1km.png'), dpi=800)
+fig.savefig(os.path.join('..','outputs','all_stadiums_1km.png'), dpi=800, bbox_inches='tight')
 plt.show()
 
 
 ```
+
+# Just London stadia 
 
 ```{python}
 # use relative2 because this is all MSOAs
