@@ -11,6 +11,7 @@ import re
 import geopandas as gpd
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import contextily as cx
 from adjustText import adjust_text
 import configparser
@@ -49,6 +50,19 @@ with psycopg2.connect(**db_params) as con:
                 '''
             
     all_trainline = gpd.read_postgis(query3, con = con, geom_col='geometry')
+
+    query4 = '''
+            SELECT foo.* 
+            FROM msoa21_boundaries AS foo
+            RIGHT JOIN (
+                SELECT DISTINCT msoa21cd
+                FROM pcode_census21_lookup 
+                WHERE ladnm = 'Haringey'
+            ) AS loo
+            ON foo.msoa21cd = loo.msoa21cd
+
+             '''
+    msoa_gdf = gpd.read_postgis(con=con, sql=query4, geom_col='geometry')
                 
 ```
 
@@ -58,11 +72,122 @@ Strange that the rail isn't perfectly aligned. Think this is as close as I'll ge
 Next add in CILIF data
 
 ```{python}
+cilif_data = pd.read_csv(os.path.join('..','data','e&w_u16_low_income_families_msoa_2022-23.csv'))
+
+cilif_data = cilif_data.rename(
+    columns = {
+        'msoa': 'msoa21nm',
+        'mnemonic':'msoa21cd',
+        'u16_percent_low_income_families':'percentage'
+    }
+)
+
+cols_to_keep = ['msoa21nm','msoa21cd', 'percentage']
+
+cilif_data = cilif_data[cols_to_keep]
+cilif_gdf = msoa_gdf.merge(cilif_data, how='left', on='msoa21cd')
+
+# Clip ECM geometries to Haringey
 ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
 ecm = ecm.to_crs(haringey_gpd.crs)
-# Clip ECM geometries to Haringey
 ecm_clipped = gpd.clip(ecm, haringey_gpd)
 # all_trainline.crs = haringey_gpd.crs
+
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=[8,8])
+
+cilif_gdf.plot(ax=ax,column='percentage', legend=True, legend_kwds=dict({'label': 'Percentage of low income families'}), alpha=0.7)
+ecm_clipped.plot(ax=ax, color='red')
+cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+ax.set_axis_off();
+```
+
+```{python}
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+
+# Get northumberland park centroid
+np = cilif_gdf.loc[cilif_gdf['msoa21cd']=='E02000398']
+np['centroid'] = np.geometry.centroid
+
+# get muswell hill north and south and dissovle into one, then get centroid
+mh = cilif_gdf.loc[(cilif_gdf['msoa21cd']=='E02000417') | (cilif_gdf['msoa21cd']=='E02000410')]
+mh = mh.dissolve()
+mh['centroid'] = mh.geometry.centroid
+
+from shapely.geometry import Point
+# Create Point in WGS84 (lon, lat)
+ally_point = Point(-0.131911, 51.594341)
+ally_pally = gpd.GeoDataFrame(geometry=[ally_point], crs="EPSG:4326")
+
+# Reproject ally_pally to the same CRS as cilif_gdf
+ally_pally = ally_pally.to_crs(cilif_gdf.crs)
+
+fig, ax = plt.subplots(figsize=[8, 8])
+
+# Plot the main layers
+cilif_gdf.plot(ax=ax, column='percentage', legend=False, alpha=0.5, edgecolor='black',linewidth=.5)
+ecm_clipped.plot(ax=ax, color='red')
+cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+ax.set_axis_off()
+
+# Create a separate legend axis
+
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create a dummy mappable for the colorbar
+norm = mpl.colors.Normalize(vmin=cilif_gdf['percentage'].min(), vmax=cilif_gdf['percentage'].max())
+cmap = plt.cm.viridis
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm._A = []
+
+# Draw the colorbar in the new axes (same height)
+cbar = fig.colorbar(sm, cax=cax)
+cbar.set_label("Percentage of children in low income families")
+
+ax.text(
+    np['centroid'].x,
+    np['centroid'].y,
+    s='Northumberland Park',
+    ha='center',
+    fontsize=8
+);
+
+ax.text(
+    mh['centroid'].x,
+    mh['centroid'].y,
+    s='Muswell Hill',
+    ha='center',
+    fontsize=8,
+    color='white'
+);
+
+ally_pally.plot(ax=ax, marker='o',color='red', markersize=5)
+
+x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+nudge_x = x_range * .01
+y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+nudge_y = y_range * .01
+
+ax.text(
+    ally_pally.geometry.x - nudge_x,
+    ally_pally.geometry.y + nudge_y,
+    s='Alexandra\nPalace',
+    ha='left',
+    fontsize=8,
+    color='white'
+
+);
+
+ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.999, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=8);
+
+plt.tight_layout()
+fig.savefig(os.path.join('..','outputs','cilif_haringey.png'), dpi=600)
+```
+```{python}
+
 # all_rail_clipped = gpd.clip(all_trainline, haringey_gpd)
 
 fig, ax = plt.subplots(1,1, figsize=[8,8])
@@ -72,3 +197,4 @@ haringey_gpd.boundary.plot(ax=ax)
 ecm_clipped.plot(ax=ax, color = 'red')
 cx.add_basemap(ax, crs = haringey_gpd.crs, source=cx.providers.OpenStreetMap.Mapnik)
 ```
+
