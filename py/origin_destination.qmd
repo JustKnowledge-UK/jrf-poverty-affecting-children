@@ -1,6 +1,13 @@
 ---
 title: "Untitled"
-format: html
+format:    
+    html:  
+        embed-resources: true
+        code-fold: true
+execute:
+    message: false
+    warning: false
+
 ---
 
 ```{python}
@@ -79,26 +86,36 @@ cols_to_keep = [
 ]
 od_data2 = od_data2[cols_to_keep]
 
-# Get output areas for Northumberland Park
-query = '''
-        SELECT DISTINCT oa21cd FROM 
-        pcode_census21_lookup 
-        WHERE msoa21cd = 'E02000398'
+# # Get output areas for Northumberland Park
+# query = '''
+#         SELECT DISTINCT oa21cd FROM 
+#         pcode_census21_lookup 
+#         WHERE msoa21cd = 'E02000398'
 
-'''
+# '''
 
-np_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
+# np_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
 
-np_oas.to_pickle(os.path.join('..','data','np_oas.pkl'))
+# np_oas.to_pickle(os.path.join('..','data','np_oas.pkl'))
+# output_dir = os.path.join('..','data')
+# # Pickle 
+# with open(os.path.join(output_dir, 'np_oas.pkl'), 'wb') as f:
+#     pickle.dump(np_oas, f)
 
-query = '''
-        SELECT DISTINCT oa21cd FROM 
-        pcode_census21_lookup 
-        WHERE msoa21cd = 'E02006794'
 
-'''
-ths_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
-ths_oas.to_pickle(os.path.join('..','data','ths_oas.pkl'))
+
+# query = '''
+#         SELECT DISTINCT oa21cd FROM 
+#         pcode_census21_lookup 
+#         WHERE msoa21cd = 'E02006794'
+
+# '''
+# ths_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
+# ths_oas.to_pickle(os.path.join('..','data','ths_oas.pkl'))
+
+# # Pickle 
+# with open(os.path.join(output_dir, 'ths_oas.pkl'), 'wb') as f:
+#     pickle.dump(ths_oas, f)
 
 # This is erroneous - drop for now
 # conditions = [
@@ -121,65 +138,19 @@ How to explore this?
 
 I think count the employment by workplace adn see wehre they're coming from. we can then label counts absed on location
 
+# Where do NP residents work
 
 ```{python}
-import plotly.graph_objects as go
-
-# Example: aggregated flow data
-# Let's assume:
-# - np_residents['area_group'] contains only 'np'
-# - np_residents['oa21cd_workplace'] are destination OAs
-# - np_residents['count'] is the flow
-
-# Step 1: Get unique labels
-labels = ['np'] + list(np_residents['oa21cd_workplace'].unique())
-
-# Step 2: Create mapping from label to index
-label_to_index = {label: i for i, label in enumerate(labels)}
-
-# Step 3: Define source and target indices
-sources = [label_to_index['np']] * len(np_residents)
-targets = [label_to_index[wp] for wp in np_residents['oa21cd_workplace']]
-values = np_residents['count'].tolist()
-
-# Step 4: Create the Sankey diagram
-fig = go.Figure(data=[go.Sankey(
-    node=dict(
-        pad=15,
-        thickness=20,
-        line=dict(color="black", width=0.5),
-        label=labels,
-        color="blue"
-    ),
-    link=dict(
-        source=sources,
-        target=targets,
-        value=values
-    )
-)])
-
-fig.update_layout(title_text="Workplace destinations for NP residents", font_size=10)
-fig.show()
-
-
-```
-
-# Where np residents work
-
-```{python}
-# Where np residents work
-od_data2[od_data2['location'] == 'np_residence'].groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(10).plot(kind='barh')
-
+np_residents = od_data2[od_data2['msoa21cd_residence'] == np_code]
+#  Maybe chuck a bar plot for context here too
+np_residents.groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
 ```
 
 ```{python}
 # Example: Where do people who live in NP work?
 # np_residents = od_data2[od_data2['location']=='np_residence']
-np_residents = od_data2[od_data2['msoa21cd_residence'] == np_code]
-workplace_counts = np_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
 
-#  Maybe chuck a bar plot for context here too
-np_residents.groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+workplace_counts = np_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
 
 
 areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
@@ -230,12 +201,12 @@ fig.show()
 ```{python}
 # ths_workers = od_data2[od_data2['location']=='ths_workplace']
 ths_workers = od_data2[od_data2['msoa21cd_workplace']==ths_code]
-
-residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
-
 #  Maybe chuck a bar plot for context here too
 ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+```
+```{python}
 
+residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 
 areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
