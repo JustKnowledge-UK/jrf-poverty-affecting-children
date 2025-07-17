@@ -63,12 +63,14 @@ query3 = f'''SELECT * FROM census21_od_workplace_msoa
             '''
 od_data = pd.read_sql(con=con, sql=query3)
 
+od_data.to_pickle(os.path.join('..','data','od_data.pkl'))
+
 od_data2 = od_data.copy()
 
 # Sum across type of workplace as we're not interseted in differentiating these
-od_data2['count'] = od_data2.groupby(['msoa21cd_residence','msoa21cd_workplace'])['count'].transform('sum')
-# This is where the duplicates come from
-od_data2 = od_data2.drop_duplicates(subset=['msoa21cd_residence','msoa21cd_workplace','place_of_work_indicator_code'])
+# od_data2['count'] = od_data2.groupby(['msoa21cd_residence','msoa21cd_workplace'])['count'].transform('sum')
+# # This is where the duplicates come from
+# od_data2 = od_data2.drop_duplicates(subset=['msoa21cd_residence','msoa21cd_workplace','place_of_work_indicator_code'])
 
 cols_to_keep = [
     'msoa21cd_residence',
@@ -87,6 +89,8 @@ query = '''
 
 np_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
 
+np_oas.to_pickle(os.path.join('..','data','np_oas.pkl'))
+
 query = '''
         SELECT DISTINCT oa21cd FROM 
         pcode_census21_lookup 
@@ -94,6 +98,7 @@ query = '''
 
 '''
 ths_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
+ths_oas.to_pickle(os.path.join('..','data','ths_oas.pkl'))
 
 # This is erroneous - drop for now
 # conditions = [
@@ -186,6 +191,8 @@ query = f'''
         '''
 msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
 
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf1.pkl'))
+
 geo_df = msoa_gdf.merge(workplace_counts, left_on='msoa21cd', right_on='msoa21cd_workplace', how='left')
 # geo_df['count'] = geo_df['count'].fillna(0)
 
@@ -238,7 +245,7 @@ query = f'''
         WHERE msoa21cd IN ({formatted_list})
         '''
 msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
-
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf2.pkl'))
 geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
 # geo_df['count'] = geo_df['count'].fillna(0)
 
