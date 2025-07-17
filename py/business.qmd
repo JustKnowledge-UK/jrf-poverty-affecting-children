@@ -455,6 +455,8 @@ ax.set_axis_off()
 
 # Over time
 
+We could take the median for the whole year perhaps...
+
 ```{python}
 from adjustText import adjust_text
 
@@ -472,7 +474,7 @@ if n_years == 1:
 for ax, year in zip(axes, years):
     # Filter for current year and Q1
     df_year = df2[(df2['year'] == year) & (df2['quarter'] == 1)].copy()
-
+    
     # Calculate average and top X% threshold
     avg_val = df_year['merchant_index_spend'].mean()
 
@@ -506,7 +508,7 @@ for ax, year in zip(axes, years):
     # adjust_text(texts, ax=ax, arrowprops=dict(arrowstyle='-', color='gray', lw=0.5))
 
     # Labels and annotations
-    ax.set_title(f"Distance vs. Merchant Index Spend in E8 - Q1 {year}")
+    ax.set_title(f"Distance vs. Merchant Index Spend in N17 - Q1 {year}")
     ax.set_ylabel(f"Merchant Index Spend ({year})")
     ax.set_xlabel("Distance (km)")
 
@@ -522,7 +524,7 @@ for ax, year in zip(axes, years):
     ax.text(
         ax.get_xlim()[1] * .95,
         ax.get_ylim()[1] * .95,
-        s=f"Top {top_pc}% range = {round(range_top,2)}km",
+        s=f"Top {top_pc}% range = {round(range_top,2)}km\nNumber areas top {top_pc}% = {len(top_df)}\nTotal areas = {len(df_year)}",
         ha='right',
         va='top'
     )
@@ -530,6 +532,7 @@ for ax, year in zip(axes, years):
 plt.tight_layout()
 plt.show()
 
+fig.savefig(os.path.join('..','outputs','session3','scatter_spending_n17.png'), dpi=600)
 ```
 
 ```{python}
@@ -557,7 +560,10 @@ with psycopg2.connect(**db_params) as con:
         combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
         yearly_combined[year] = combined
 
-yearly_combined.to_pickle(os.path.join('..','data','yearly_combined.pkl'))
+output_dir = os.path.join('..','data')
+# Pickle the dictionary
+with open(os.path.join(output_dir, 'yearly_combined.pkl'), 'wb') as f:
+    pickle.dump(yearly_combined, f)
 
 # Compute global min and max for 'merchant_index_spend'
 all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
@@ -607,9 +613,136 @@ for ax, year in zip(axes, years):
 plt.tight_layout()
 plt.show()
 
+fig.savefig(os.path.join('..','outputs','session3','choro_spending_n17.png'), dpi=600)
 ```
 
-n4, n16 and further south (hackney + more), stoke newington etc.
+```{python}
+import matplotlib.pyplot as plt
+from adjustText import adjust_text
+import numpy as np
+import os
+import pickle
+import geopandas as gpd
+import contextily as cx
+import psycopg2
+
+years = sorted(df2['year'].unique().tolist())
+top_pc = 5
+n_years = len(years)
+
+# Prepare data for map plots (as in your second code block)
+yearly_combined = {}
+with psycopg2.connect(**db_params) as con:
+    for year in years:
+        df_year = df2[(df2['year'] == year) & (df2['quarter'] == 1)].copy()
+        df_year = df_year.drop_duplicates(subset=['cardholder_location'])
+
+        top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
+        top_districts = df_year[df_year['merchant_index_spend'] >= top_threshold]['cardholder_location'].tolist()
+        formatted_list = ', '.join([f"'{district}'" for district in top_districts])
+
+        query = f'''
+            SELECT * 
+            FROM postcode_district_boundaries
+            WHERE district IN ({formatted_list})
+        '''
+        gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
+        gdf['centroid'] = gdf.geometry.centroid
+        combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
+        yearly_combined[year] = combined
+
+# Global color scale
+all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
+global_vmin = all_spend_values.min()
+global_vmax = all_spend_values.max()
+
+# Create 5x2 subplot
+fig, axes = plt.subplots(nrows=n_years, ncols=2, figsize=(16, 6 * n_years))
+
+# Ensure axes is always 2D
+if n_years == 1:
+    axes = np.array([axes])
+
+for i, year in enumerate(years):
+    ax_scatter = axes[i, 0]
+    ax_map = axes[i, 1]
+
+    ### LEFT: SCATTER PLOT ###
+    df_year = df2[(df2['year'] == year) & (df2['quarter'] == 1)].copy()
+    avg_val = df_year['merchant_index_spend'].mean()
+
+    ax_scatter.scatter(df_year['distance_km'], df_year['merchant_index_spend'], alpha=0.6)
+    ax_scatter.axhline(y=avg_val, color='r', linestyle='dashed')
+
+    top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
+    top_df = df_year[df_year['merchant_index_spend'] >= top_threshold]
+    range_top = top_df['distance_km'].max()
+
+    for _, row in top_df.iterrows():
+        ax_scatter.text(
+            row['distance_km'],
+            row['merchant_index_spend'],
+            row['cardholder_location'],
+            fontsize=8,
+            alpha=0.7
+        )
+
+    ax_scatter.set_title(f"Distance vs. Spend - Q1 {year}")
+    ax_scatter.set_xlabel("Distance (km)")
+    ax_scatter.set_ylabel("Merchant Index Spend")
+
+    ax_scatter.text(
+        ax_scatter.get_xlim()[1],
+        ax_scatter.get_ylim()[0]*3.5,
+        s=f"Red dashed line = average ({round(avg_val, 2)})\nTop {top_pc}% labelled",
+        size=8,
+        ha='right'
+    )
+
+    ax_scatter.text(
+        ax_scatter.get_xlim()[1] * .95,
+        ax_scatter.get_ylim()[1] * .95,
+        s=f"Top {top_pc}% range = {round(range_top,2)}km\n# areas top {top_pc}% = {len(top_df)}\nTotal areas = {len(df_year)}",
+        ha='right',
+        va='top'
+    )
+
+    ### RIGHT: MAP PLOT ###
+    gdf = yearly_combined[year]
+
+    gdf.plot(
+        ax=ax_map,
+        column='merchant_index_spend',
+        legend=True,
+        legend_kwds={'label': f'Index of Spending in N17 (Q1 {year})'},
+        alpha=0.5,
+        edgecolor='black',
+        vmin=global_vmin,
+        vmax=global_vmax
+    )
+
+    for _, row in gdf.iterrows():
+        x = row['centroid'].x
+        y = row['centroid'].y
+        ax_map.text(x, y, row['district'], fontsize=8, ha='center', va='center')
+
+    cx.add_basemap(ax_map, crs=gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+    ax_map.set_title(f"Top {top_pc}% Districts Map - Q1 {year}", fontsize=12)
+    ax_map.set_axis_off()
+
+    range_top_map = gdf['distance_km'].max()
+    ax_map.text(
+        ax_map.get_xlim()[1],
+        ax_map.get_ylim()[0],
+        s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
+        ha='right',
+        va='top'
+    )
+
+plt.tight_layout()
+plt.show()
+
+```
 
 # a different area
 
@@ -683,7 +816,7 @@ if n_years == 1:
 for ax, year in zip(axes, years):
     # Filter for current year and Q1
     df_year = df3[(df3['year'] == year) & (df3['quarter'] == 1)].copy()
-
+    print(len(df_year))
     # Calculate average and top X% threshold
     avg_val = df_year['merchant_index_spend'].mean()
 
@@ -733,7 +866,7 @@ for ax, year in zip(axes, years):
     ax.text(
         ax.get_xlim()[1] * .95,
         ax.get_ylim()[1] * .95,
-        s=f"Top {top_pc}% range = {round(range_top,2)}km",
+        s=f"Top {top_pc}% range = {round(range_top,2)}km\nNumber areas top {top_pc}% = {len(top_df)}\nTotal areas = {len(df_year)}",
         ha='right',
         va='top'
     )
@@ -741,7 +874,7 @@ for ax, year in zip(axes, years):
 plt.tight_layout()
 plt.show()
 
-
+fig.savefig(os.path.join('..','outputs','session3','scatter_spending_e8.png'), dpi=600)
 ```
 
 
@@ -771,7 +904,9 @@ with psycopg2.connect(**db_params) as con:
         combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
         yearly_combined[year] = combined
 
-yearly_combined.to_pickle(os.path.join('..','data','yearly_combined2.pkl'))
+# Pickle the dictionary
+with open(os.path.join(output_dir, 'yearly_combined2.pkl'), 'wb') as f:
+    pickle.dump(yearly_combined, f)
 
 # Compute global min and max for 'merchant_index_spend'
 all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
@@ -820,11 +955,140 @@ for ax, year in zip(axes, years):
 
 plt.tight_layout()
 plt.show()
+
+
+fig.savefig(os.path.join('..','outputs','session3','choro_spending_e8.png'), dpi=600)
 ```
 
-
 ```{python}
-test = e8_merchant.groupby(['year','quarter','merchant_location'])['merchant_index_spend'].sum().reset_index()
+import matplotlib.pyplot as plt
+from geopy.distance import geodesic
+import geopandas as gpd
+import contextily as cx
+import numpy as np
+import psycopg2
+import os
+import pickle
 
-test4 = q1_2019.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
+top_pc = 5
+years = sorted(df3['year'].unique())
+n_years = len(years)
+
+### Step 1: Prepare map data ###
+yearly_combined = {}
+
+with psycopg2.connect(**db_params) as con:
+    for year in years:
+        df_year = df3[(df3['year'] == year) & (df3['quarter'] == 1)].copy()
+        df_year = df_year.drop_duplicates(subset=['cardholder_location'])
+
+        top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
+        top_districts = df_year[df_year['merchant_index_spend'] >= top_threshold]['cardholder_location'].tolist()
+        formatted_list = ', '.join([f"'{district}'" for district in top_districts])
+
+        query = f'''
+            SELECT * 
+            FROM postcode_district_boundaries
+            WHERE district IN ({formatted_list})
+        '''
+        gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
+        gdf['centroid'] = gdf.geometry.centroid
+        combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
+        yearly_combined[year] = combined
+
+# Global vmin/vmax for consistent color scale
+all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
+global_vmin = all_spend_values.min()
+global_vmax = all_spend_values.max()
+
+### Step 2: Set up 5x2 layout ###
+fig, axes = plt.subplots(nrows=n_years, ncols=2, figsize=(16, 6 * n_years))
+if n_years == 1:
+    axes = np.array([axes])  # Ensure 2D even for 1 row
+
+### Step 3: Plot each year ###
+for i, year in enumerate(years):
+    ax_scatter = axes[i, 0]
+    ax_map = axes[i, 1]
+
+    ### LEFT: SCATTER ###
+    df_year = df3[(df3['year'] == year) & (df3['quarter'] == 1)].copy()
+    avg_val = df_year['merchant_index_spend'].mean()
+    
+    ax_scatter.scatter(df_year['distance_km'], df_year['merchant_index_spend'], alpha=0.6)
+    ax_scatter.axhline(y=avg_val, color='r', linestyle='dashed')
+
+    # Label top 5%
+    top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
+    top_df = df_year[df_year['merchant_index_spend'] >= top_threshold]
+    range_top = top_df['distance_km'].max()
+
+    for _, row in top_df.iterrows():
+        ax_scatter.text(
+            row['distance_km'],
+            row['merchant_index_spend'],
+            row['cardholder_location'],
+            fontsize=8,
+            alpha=0.7
+        )
+
+    ax_scatter.set_title(f"Distance vs Spend (E8) - Q1 {year}")
+    ax_scatter.set_xlabel("Distance (km)")
+    ax_scatter.set_ylabel("Merchant Index Spend")
+
+    ax_scatter.text(
+        ax_scatter.get_xlim()[1],
+        ax_scatter.get_ylim()[0]*5,
+        s=f"Red dashed line = average ({round(avg_val, 2)})\nTop {top_pc}% labelled",
+        size=8,
+        ha='right'
+    )
+
+    ax_scatter.text(
+        ax_scatter.get_xlim()[1] * .95,
+        ax_scatter.get_ylim()[1] * .95,
+        s=f"Top {top_pc}% range = {round(range_top,2)}km\n# top areas = {len(top_df)}\nTotal areas = {len(df_year)}",
+        ha='right',
+        va='top'
+    )
+
+    ### RIGHT: MAP ###
+    gdf = yearly_combined[year]
+    gdf.plot(
+        ax=ax_map,
+        column='merchant_index_spend',
+        legend=True,
+        legend_kwds={'label': f'Spending Index - Q1 {year}'},
+        alpha=0.5,
+        edgecolor='black',
+        vmin=global_vmin,
+        vmax=global_vmax
+    )
+
+    for _, row in gdf.iterrows():
+        x = row['centroid'].x
+        y = row['centroid'].y
+        ax_map.text(x, y, row['district'], fontsize=8, ha='center', va='center')
+
+    cx.add_basemap(ax_map, crs=gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+    ax_map.set_title(f"Top {top_pc}% Cardholder Districts - Q1 {year}")
+    ax_map.set_axis_off()
+
+    range_top_map = gdf['distance_km'].max()
+    ax_map.text(
+        ax_map.get_xlim()[1],
+        ax_map.get_ylim()[0],
+        s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
+        ha='right',
+        va='top'
+    )
+
+plt.tight_layout()
+plt.show()
+
+```
+```{python}
+# test = e8_merchant.groupby(['year','quarter','merchant_location'])['merchant_index_spend'].sum().reset_index()
+
+# test4 = q1_2019.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
 ```
