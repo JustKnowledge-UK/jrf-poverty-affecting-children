@@ -97,6 +97,7 @@ card_data2 = card_data.loc[card_data['cardholder_location'].isin(pcodes_of_inter
 
 # Split time period into year and quarter
 card_data2[['year','quarter']] = card_data2['time_period_value'].str.split('Q', expand=True).astype(int)
+
 month_map = {1: '-03-01', 2: '-06-01', 3: '-09-01', 4: '-12-01'}
 
 card_data2['year_month'] = pd.to_datetime(
@@ -187,6 +188,9 @@ with psycopg2.connect(**db_params) as con:
              WHERE district IN ({formatted_list})
              '''
     geoms_of_interest = gpd.read_postgis(query2, con=con, geom_col='geometry')
+
+geoms_of_interest.to_pickle(os.path.join('..','data','geoms_of_interest1.pkl'))
+
 
 # Get centroids
 geoms_of_interest['centroid'] = geoms_of_interest.geometry.centroid
@@ -377,7 +381,7 @@ with psycopg2.connect(**db_params) as con:
              '''
     top_pc_gdf3 = gpd.read_postgis(query2, con=con, geom_col='geometry')
 
-top_pc_gdf3.to_pickle(os.path.join('..','data','top_pc_gdf2.pkl'))
+top_pc_gdf3.to_pickle(os.path.join('..','data','top_pc_gdf3.pkl'))
 
 top_pc_gdf3['centroid'] = top_pc_gdf3.geometry.centroid
 
@@ -553,6 +557,8 @@ with psycopg2.connect(**db_params) as con:
         combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
         yearly_combined[year] = combined
 
+yearly_combined.to_pickle(os.path.join('..','data','yearly_combined.pkl'))
+
 # Compute global min and max for 'merchant_index_spend'
 all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
 global_vmin = all_spend_values.min()
@@ -622,6 +628,8 @@ with psycopg2.connect(**db_params) as con:
              WHERE district IN ({formatted_list})
              '''
     geoms_of_interest = gpd.read_postgis(query2, con=con, geom_col='geometry')
+
+geoms_of_interest.to_pickle(os.path.join('..','data','geoms_of_interest2.pkl'))
 
 # Get centroids
 geoms_of_interest['centroid'] = geoms_of_interest.geometry.centroid
@@ -762,6 +770,8 @@ with psycopg2.connect(**db_params) as con:
 
         combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
         yearly_combined[year] = combined
+
+yearly_combined.to_pickle(os.path.join('..','data','yearly_combined2.pkl'))
 
 # Compute global min and max for 'merchant_index_spend'
 all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
