@@ -1,0 +1,280 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import re
+import geopandas as gpd
+from shapely.geometry import Point
+import matplotlib.pyplot as plt
+import contextily as cx
+from adjustText import adjust_text
+import configparser
+import psycopg2
+import os
+import pickle
+import numpy as np
+from sklearn.neighbors import BallTree, radius_neighbors_graph
+from scipy.spatial import cKDTree
+import janitor
+import zipfile
+import glob
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+
+db_params = dict(config['postgresql'])
+```
+
+
+```{python}
+query = '''
+        SELECT DISTINCT msoa21cd
+        FROM pcode_census21_lookup 
+        WHERE ladnm = 'Haringey'
+        '''
+
+
+with psycopg2.connect(**db_params) as con:
+    
+    lookup = pd.read_sql(con=con, sql=query)
+
+formatted_list = ', '.join([f"'{district}'" for district in lookup['msoa21cd'].tolist()])
+
+# query2 = f'''
+#     SELECT * 
+#     FROM census21_od_workplace_msoa
+#     WHERE msoa21cd_residence IN ({formatted_list})
+#     OR msoa21cd_workplace IN ({formatted_list})
+#     '''
+
+# Union approach much more efficient. Union removes duplicates. note if I wanted duplciates I could use UNION ALL
+query3 = f'''SELECT * FROM census21_od_workplace_msoa
+            WHERE msoa21cd_residence IN ({formatted_list})
+
+            UNION
+
+            SELECT * FROM census21_od_workplace_msoa
+            WHERE msoa21cd_workplace IN ({formatted_list});
+            '''
+od_data = pd.read_sql(con=con, sql=query3)
+
+od_data2 = od_data.copy()
+
+# Sum across type of workplace as we're not interseted in differentiating these
+od_data2['count'] = od_data2.groupby(['msoa21cd_residence','msoa21cd_workplace'])['count'].transform('sum')
+# This is where the duplicates come from
+od_data2 = od_data2.drop_duplicates(subset=['msoa21cd_residence','msoa21cd_workplace','place_of_work_indicator_code'])
+
+cols_to_keep = [
+    'msoa21cd_residence',
+    'msoa21cd_workplace',
+    'count'
+]
+od_data2 = od_data2[cols_to_keep]
+
+# Get output areas for Northumberland Park
+query = '''
+        SELECT DISTINCT oa21cd FROM 
+        pcode_census21_lookup 
+        WHERE msoa21cd = 'E02000398'
+
+'''
+
+np_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
+
+query = '''
+        SELECT DISTINCT oa21cd FROM 
+        pcode_census21_lookup 
+        WHERE msoa21cd = 'E02006794'
+
+'''
+ths_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
+
+# This is erroneous - drop for now
+# conditions = [
+#     (od_data2['msoa21cd_residence'] == 'E02000398'),
+#     (od_data2['msoa21cd_workplace'] == 'E02000398'),
+#     (od_data2['msoa21cd_residence'] == 'E02006794'),
+#     (od_data2['msoa21cd_workplace']== 'E02006794')
+# ]
+
+# choices = ['np_residence', 'np_workplace','ths_residence','ths_workplace']
+
+# # Apply the conditions
+# od_data2['location'] = np.select(conditions, choices, default='other')
+
+np_code = 'E02000398'
+ths_code = 'E02006794'
+```
+
+How to explore this?
+
+I think count the employment by workplace adn see wehre they're coming from. we can then label counts absed on location
+
+
+```{python}
+import plotly.graph_objects as go
+
+# Example: aggregated flow data
+# Let's assume:
+# - np_residents['area_group'] contains only 'np'
+# - np_residents['oa21cd_workplace'] are destination OAs
+# - np_residents['count'] is the flow
+
+# Step 1: Get unique labels
+labels = ['np'] + list(np_residents['oa21cd_workplace'].unique())
+
+# Step 2: Create mapping from label to index
+label_to_index = {label: i for i, label in enumerate(labels)}
+
+# Step 3: Define source and target indices
+sources = [label_to_index['np']] * len(np_residents)
+targets = [label_to_index[wp] for wp in np_residents['oa21cd_workplace']]
+values = np_residents['count'].tolist()
+
+# Step 4: Create the Sankey diagram
+fig = go.Figure(data=[go.Sankey(
+    node=dict(
+        pad=15,
+        thickness=20,
+        line=dict(color="black", width=0.5),
+        label=labels,
+        color="blue"
+    ),
+    link=dict(
+        source=sources,
+        target=targets,
+        value=values
+    )
+)])
+
+fig.update_layout(title_text="Workplace destinations for NP residents", font_size=10)
+fig.show()
+
+
+```
+
+# Where np residents work
+
+```{python}
+# Where np residents work
+od_data2[od_data2['location'] == 'np_residence'].groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(10).plot(kind='barh')
+
+```
+
+```{python}
+# Example: Where do people who live in NP work?
+# np_residents = od_data2[od_data2['location']=='np_residence']
+np_residents = od_data2[od_data2['msoa21cd_residence'] == np_code]
+workplace_counts = np_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
+
+#  Maybe chuck a bar plot for context here too
+np_residents.groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+
+
+areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
+geo_df = msoa_gdf.merge(workplace_counts, left_on='msoa21cd', right_on='msoa21cd_workplace', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='count',
+    hover_name='msoa21cd',  # Optional: show code or name
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title="Where NP Residents Work (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+
+```
+
+# Where do THS workers live
+
+```{python}
+# ths_workers = od_data2[od_data2['location']=='ths_workplace']
+ths_workers = od_data2[od_data2['msoa21cd_workplace']==ths_code]
+
+residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+
+#  Maybe chuck a bar plot for context here too
+ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+
+
+areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
+geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='count',
+    hover_name='msoa21cd',  # Optional: show code or name
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title="Where THS Workers Live (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+
+```
+
+NOTE: We may need to do something differnet with place of work stuff. but it does actually include it..
+
+Can we do something similar for a different stadium and see the area of effect?
+
+There's somethign wrong with the coutns for ths_workesrs. people liviung and working in ths are duplicated. I think i'm coutngin twice somehow
+
+also maybe think about where people are working as in working pattern
