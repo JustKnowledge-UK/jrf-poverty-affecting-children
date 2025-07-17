@@ -560,7 +560,7 @@ for i, year in enumerate(years):
         ax=ax_map,
         column='merchant_index_spend',
         legend=True,
-        legend_kwds={'label': f'Index of Spending in N17 (Q1 {year})'},
+        legend_kwds={'label': f'Merchant Index Spend'},
         alpha=0.5,
         edgecolor='black',
         vmin=global_vmin,
@@ -576,14 +576,14 @@ for i, year in enumerate(years):
     ax_map.set_title(f"Top {top_pc}% Districts Map - Q1 {year}", fontsize=12)
     ax_map.set_axis_off()
 
-    range_top_map = gdf['distance_km'].max()
-    ax_map.text(
-        ax_map.get_xlim()[1],
-        ax_map.get_ylim()[0],
-        s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
-        ha='right',
-        va='top'
-    )
+    # range_top_map = gdf['distance_km'].max()
+    # ax_map.text(
+    #     ax_map.get_xlim()[1],
+    #     ax_map.get_ylim()[0],
+    #     s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
+    #     ha='right',
+    #     va='top'
+    # )
 
 plt.tight_layout()
 plt.show()
@@ -696,7 +696,7 @@ for i, year in enumerate(years):
         ax=ax_map,
         column='merchant_index_spend',
         legend=True,
-        legend_kwds={'label': f'Spending Index - Q1 {year}'},
+        legend_kwds={'label': f'Merchant Index Spend'},
         alpha=0.5,
         edgecolor='black',
         vmin=global_vmin,
@@ -712,14 +712,14 @@ for i, year in enumerate(years):
     ax_map.set_title(f"Top {top_pc}% Cardholder Districts - Q1 {year}")
     ax_map.set_axis_off()
 
-    range_top_map = gdf['distance_km'].max()
-    ax_map.text(
-        ax_map.get_xlim()[1],
-        ax_map.get_ylim()[0],
-        s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
-        ha='right',
-        va='top'
-    )
+    # range_top_map = gdf['distance_km'].max()
+    # ax_map.text(
+    #     ax_map.get_xlim()[1],
+    #     ax_map.get_ylim()[0],
+    #     s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
+    #     ha='right',
+    #     va='top'
+    # )
 
 plt.tight_layout()
 plt.show()
