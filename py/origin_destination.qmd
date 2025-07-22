@@ -143,7 +143,17 @@ I think count the employment by workplace adn see wehre they're coming from. we 
 ```{python}
 np_residents = od_data2[od_data2['msoa21cd_residence'] == np_code]
 #  Maybe chuck a bar plot for context here too
-np_residents.groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+ax = np_residents.groupby('msoa21cd_workplace')['count'].sum()\
+    .div(np_residents['count'].sum())\
+    .mul(100)\
+    .sort_values(ascending=False)\
+    .head(20)\
+    .plot(kind='barh')
+
+ax.set_xlabel('Percentage of Total Residence Population (%)')
+ax.set_ylabel('MSOA Workplace Code')
+ax.set_title(f'Top 20 place where residents in {np_code} work')
+
 ```
 
 ```{python}
@@ -151,7 +161,7 @@ np_residents.groupby('msoa21cd_workplace')['count'].sum().sort_values(ascending=
 # np_residents = od_data2[od_data2['location']=='np_residence']
 
 workplace_counts = np_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
-
+workplace_counts['percentage'] = workplace_counts['count'].div(workplace_counts['count'].sum()) * 100
 
 areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
@@ -177,7 +187,7 @@ fig = px.choropleth_mapbox(
     geo_df,
     geojson=geo_df.geometry,
     locations=geo_df.index,  # any unique identifier
-    color='count',
+    color='percentage',
     hover_name='msoa21cd',  # Optional: show code or name
     color_continuous_scale="Viridis",
     mapbox_style="carto-positron",
@@ -202,11 +212,24 @@ fig.show()
 # ths_workers = od_data2[od_data2['location']=='ths_workplace']
 ths_workers = od_data2[od_data2['msoa21cd_workplace']==ths_code]
 #  Maybe chuck a bar plot for context here too
-ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+# ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+
+ax = ths_workers.groupby('msoa21cd_residence')['count'].sum()\
+    .div(ths_workers['count'].sum())\
+    .mul(100)\
+    .sort_values(ascending=False)\
+    .head(20)\
+    .plot(kind='barh')
+
+ax.set_xlabel('Percentage of Total Workplace Population (%)')
+ax.set_ylabel('MSOA Residence Code')
+ax.set_title(f'Top 20 places where workers in {ths_code} live')
+
 ```
 ```{python}
 
 residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 
 areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
@@ -230,7 +253,7 @@ fig = px.choropleth_mapbox(
     geo_df,
     geojson=geo_df.geometry,
     locations=geo_df.index,  # any unique identifier
-    color='count',
+    color='percentage',
     hover_name='msoa21cd',  # Optional: show code or name
     color_continuous_scale="Viridis",
     mapbox_style="carto-positron",
@@ -249,10 +272,386 @@ fig.show()
 
 ```
 
+```{python}
+# etst with log
+residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
+residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
+
+areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf2.pkl'))
+geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='log_percentage',
+    hover_name='msoa21cd',  # Optional: show code or name
+    hover_data={'percentage': ':.2f'},
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title="Where THS Workers Live (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+
+```
 NOTE: We may need to do something differnet with place of work stuff. but it does actually include it..
 
 Can we do something similar for a different stadium and see the area of effect?
 
-There's somethign wrong with the coutns for ths_workesrs. people liviung and working in ths are duplicated. I think i'm coutngin twice somehow
 
 also maybe think about where people are working as in working pattern
+
+Repeat the THS workers for another stadium
+
+# Emirates 
+
+```{python}
+# Get the records for emirates 
+emirates_code = 'E02000564'
+formatted_list = ', '.join([f"'{district}'" for district in [emirates_code]])
+
+
+query3 = f'''SELECT * FROM census21_od_workplace_msoa
+            WHERE msoa21cd_workplace IN ({formatted_list})
+
+            UNION
+
+            SELECT * FROM census21_od_workplace_msoa
+            WHERE msoa21cd_residence IN ({formatted_list});
+            '''
+emirates_od_data = pd.read_sql(con=con, sql=query3)
+```
+
+```{python}
+emirates_residents = emirates_od_data[emirates_od_data['msoa21cd_residence'] == emirates_code]
+#  Maybe chuck a bar plot for context here too
+ax = emirates_residents.groupby('msoa21cd_workplace')['count'].sum()\
+    .div(emirates_residents['count'].sum())\
+    .mul(100)\
+    .sort_values(ascending=False)\
+    .head(20)\
+    .plot(kind='barh')
+
+ax.set_xlabel('Percentage of Total Residence Population (%)')
+ax.set_ylabel('MSOA Workplace Code')
+ax.set_title(f'Top 20 place where residents in {emirates_code} work')
+
+```
+
+```{python}
+# Example: Where do people who live in NP work?
+# np_residents = od_data2[od_data2['location']=='np_residence']
+
+workplace_counts = emirates_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
+workplace_counts['percentage'] = workplace_counts['count'].div(workplace_counts['count'].sum()) * 100
+
+areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf1.pkl'))
+
+geo_df = msoa_gdf.merge(workplace_counts, left_on='msoa21cd', right_on='msoa21cd_workplace', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='percentage',
+    hover_name='msoa21cd',  # Optional: show code or name
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title="Where Residents Work (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+
+```
+
+```{python}
+
+emirates_workers = emirates_od_data[emirates_od_data['msoa21cd_workplace']==emirates_code]
+
+
+#  Maybe chuck a bar plot for context here too
+# ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
+
+ax = emirates_workers.groupby('msoa21cd_residence')['count'].sum()\
+    .div(emirates_workers['count'].sum())\
+    .mul(100)\
+    .sort_values(ascending=False)\
+    .head(20)\
+    .plot(kind='barh')
+
+ax.set_xlabel('Percentage of Total Workplace Population (%)')
+ax.set_ylabel('MSOA Residence Code')
+ax.set_title(f'Top 20 places where workers in {emirates_code} live');
+
+```
+
+```{python}
+
+residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
+
+areas_of_interest = residence_counts['msoa21cd_residence'].tolist() 
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf3.pkl'))
+
+geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='percentage',
+    hover_name='msoa21cd',  # Optional: show code or name
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title=f"Where {emirates_code} workers Live (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+```
+
+test with rescaled variable
+
+```{python}
+
+residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
+residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
+
+areas_of_interest = residence_counts['msoa21cd_residence'].tolist() 
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+        SELECT * 
+        FROM msoa21_boundaries
+        WHERE msoa21cd IN ({formatted_list})
+        '''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf3.pkl'))
+
+geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
+# geo_df['count'] = geo_df['count'].fillna(0)
+
+import plotly.express as px
+
+# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
+geo_df = geo_df.to_crs(epsg=4326)
+
+# Create the Plotly choropleth
+fig = px.choropleth_mapbox(
+    geo_df,
+    geojson=geo_df.geometry,
+    locations=geo_df.index,  # any unique identifier
+    color='log_percentage',
+    hover_name='msoa21cd',  # Optional: show code or name
+    hover_data={'percentage':':.2f'},
+    color_continuous_scale="Viridis",
+    mapbox_style="carto-positron",
+    center={"lat": geo_df.geometry.centroid.y.mean(), 
+            "lon": geo_df.geometry.centroid.x.mean()},
+    zoom=9,  # Adjust depending on your area
+    opacity=0.6
+)
+
+fig.update_layout(
+    title=f"Where {emirates_code} workers Live (MSOA level)",
+    margin={"r":0,"t":30,"l":0,"b":0}
+)
+fig.show()
+
+```
+
+can we incroproate distnace into this?
+
+e.g. percetnage x distacne, in bins or simply a 'within 1km' and 'beyond 1km'?
+
+or some bars comparing all stadia
+
+for comparing two areas, do i need to scale taking into account the data for both areas? THS looks like it has lots of employment in nearby earas but actually hte coutns are lwo
+
+# Exploring all stadia workzones
+
+Plan:
+
+1. Use stadia locations as filter for workplace locations in od_data request
+2. Use stadium neighbours to flag areas within 1km of the stadium (note exclude the stadium area from this list) and areas beyond 1km of the stadium.
+
+```{python}
+# Load the stadium locations
+with open(os.path.join('..','data','stadium_locations.pkl'), "rb") as input_file:
+    stadia = pickle.load(input_file)
+
+with open(os.path.join('..','data','stadium_neighbours.pkl'), "rb") as input_file:
+    stadium_neighbours = pickle.load(input_file)
+```
+
+
+```{python}
+results = []
+for stadium in stadia['Stadium'].unique():
+    stadium_msoa = stadia.loc[stadia['Stadium']==stadium,'msoa21cd'].tolist()[0]
+    region = stadia.loc[stadia['Stadium']==stadium,'rgn21nm'].tolist()[0]
+    formatted_list = ', '.join([f"'{district}'" for district in [stadium_msoa]])
+
+    query = f'''SELECT * FROM census21_od_workplace_msoa
+                WHERE msoa21cd_workplace IN ({formatted_list});
+                '''
+    stadium_workers = pd.read_sql(con=con, sql=query)
+
+    # Get msoas within 1km
+    msoas_within_1km = stadium_neighbours.loc[stadium_neighbours['stadium']==stadium, 'msoa21cd'].unique().tolist()
+    # Drop the msoa the stadium is in (do we definitely want to do this?)
+    msoas_within_1km = [msoa for msoa in msoas_within_1km if msoa not in stadium_msoa]
+
+    stadium_workers['within_1km'] = stadium_workers['msoa21cd_residence'].isin(msoas_within_1km)
+
+    conditions = [
+        (stadium_workers['msoa21cd_residence']==stadium_msoa),
+        (stadium_workers['msoa21cd_residence'].isin(msoas_within_1km))
+    ]
+
+    choices = ["Stadium","Within 1km"]
+    stadium_workers['location'] = np.select(conditions, choices, default="Beyond 1km")
+
+    stadium_workers['stadium'] = stadium
+    residence_counts = stadium_workers.groupby(['stadium','location'])['count'].sum().reset_index()
+    residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()).mul(100)
+    residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
+    
+    residence_counts['region'] = region
+    front_cols = ['stadium','location','region']
+    residence_counts = residence_counts[front_cols + [col for col in residence_counts.columns if col not in front_cols]]
+
+    results.append(residence_counts)
+
+all_results = pd.concat(results).reset_index(drop=True)
+
+```
+
+Now we plot
+
+```{python}
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+custom_order = ['Stadium','Within 1km', 'Beyond 1km']
+
+fig, ax = plt.subplots(figsize=(8, 8))
+
+sns.barplot(
+    data=all_results, 
+    x='percentage', 
+    y='stadium', 
+    hue='location', 
+    hue_order=custom_order,
+    ax=ax)
+
+# Optional: rotate x-axis labels if they overlap
+ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+
+plt.tight_layout()
+plt.show()
+
+```
+
+Just London
+
+
+```{python}
+
+custom_order = ['Stadium','Within 1km', 'Beyond 1km']
+
+fig, ax = plt.subplots(figsize=(8, 8))
+
+london = all_results.loc[all_results['region']=='London']
+
+sns.barplot(
+    data=london, 
+    x='percentage', 
+    y='stadium', 
+    hue='location', 
+    hue_order=custom_order,
+    ax=ax)
+
+
+ax.set_xlabel('Percentage')
+ax.set_ylabel('')
+ax.legend().set_title('')
+
+fig.suptitle('Where workers in a stadium MSOA live')
+
+plt.tight_layout()
+plt.show()
+
+
+fig.savefig(os.path.join('..','outputs','session3','stadium_employment.png'), dpi=600)
+```
