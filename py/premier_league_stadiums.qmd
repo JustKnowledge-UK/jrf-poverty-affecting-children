@@ -23,6 +23,7 @@ from sklearn.neighbors import BallTree, radius_neighbors_graph
 from scipy.spatial import cKDTree
 import janitor
 
+
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config_jk.ini'))
 
@@ -392,6 +393,7 @@ else:
 Use spatial join to locate stadiums in MSOAs
 
 ```{python}
+
 # subset to only the current premier league satdiums
 clubs = [
     'Emirates Stadium',
@@ -423,6 +425,11 @@ points_gdf = points_gdf.to_crs(epsg=27700) # maybe go back to web scraping and r
 
 # Spatial join to find which polygon each point falls in
 joined = gpd.sjoin(points_gdf, msoa_gdf, how='left', predicate='within')
+# with psycopg2.connect(**db_params) as con:
+#     joined.to_postgis(name="premier_league_stadia_locations", con=con, if_exists="replace", index=False)
+
+joined.to_pickle(os.path.join('..','data','stadium_locations.pkl'))
+
 ```
 
 # Finding nearest neighbours
@@ -561,6 +568,7 @@ msoa_stadium_df = pd.DataFrame(msoa_stadium_rows)
 
 # Step 3: Join this info with the original MSOA GeoDataFrame
 neighbors_gdf = msoa_gdf.merge(msoa_stadium_df, on='msoa21cd', how='inner')
+neighbors_gdf.to_pickle(os.path.join('..','data','stadium_neighbours.pkl'))
 ```
 
 ```{python}
