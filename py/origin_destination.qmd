@@ -141,6 +141,7 @@ I think count the employment by workplace adn see wehre they're coming from. we 
 # Where do NP residents work
 
 ```{python}
+#| include: false
 np_residents = od_data2[od_data2['msoa21cd_residence'] == np_code]
 #  Maybe chuck a bar plot for context here too
 ax = np_residents.groupby('msoa21cd_workplace')['count'].sum()\
@@ -157,6 +158,7 @@ ax.set_title(f'Top 20 place where residents in {np_code} work')
 ```
 
 ```{python}
+#| include: false
 # Example: Where do people who live in NP work?
 # np_residents = od_data2[od_data2['location']=='np_residence']
 
@@ -227,7 +229,7 @@ ax.set_title(f'Top 20 places where workers in {ths_code} live')
 
 ```
 ```{python}
-
+#| include: false
 residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 
@@ -271,6 +273,8 @@ fig.show()
 
 
 ```
+
+
 
 ```{python}
 # etst with log
@@ -319,6 +323,142 @@ fig.show()
 
 
 ```
+
+```{python}
+# static version
+import geopandas as gpd
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import os
+
+# Assuming ths_workers, con are already defined
+residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
+residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
+residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
+
+# Include specific additional areas
+areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398', 'E02006794']
+formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
+query = f'''
+    SELECT DISTINCT foo.*, loo.ladnm, poo.rgn21nm
+    FROM msoa21_boundaries foo
+    LEFT JOIN pcode_census21_lookup loo
+    ON foo.msoa21cd = loo.msoa21cd
+    LEFT JOIN lad21_lookup poo
+    ON loo.ladnm = poo.lad21nm
+    WHERE foo.msoa21cd IN ({formatted_list})
+'''
+msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
+# Optional: Save for reuse
+msoa_gdf.to_pickle(os.path.join('..', 'data', 'msoa_gdf3.pkl'))
+
+# Merge with residence data
+geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
+
+# Ensure CRS is appropriate for plotting
+geo_df = geo_df.to_crs(epsg=3857)  # Web Mercator for plotting with Matplotlib
+
+```
+
+```{python}
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib as mpl
+
+geo_df2 = geo_df.loc[geo_df['rgn21nm']=='London']
+
+# Plotting
+fig, ax = plt.subplots(figsize=(10, 10))
+
+# Plot geometries colored by log_percentage
+geo_df2.plot(
+    column='log_percentage',
+    cmap='viridis',
+    linewidth=0.5,
+    edgecolor='white',
+    # legend=True,
+    # legend_kwds={'label': 'Log percentage of workers'},
+    ax=ax,
+    missing_kwds={
+        "color": "lightgrey",
+        "label": "No data",
+    },
+    alpha=0.8
+)
+cx.add_basemap(ax, crs=geo_df2.crs, source=cx.providers.OpenStreetMap.Mapnik)
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create a dummy mappable for the colorbar
+norm = mpl.colors.Normalize(vmin=geo_df2['log_percentage'].min(), vmax=geo_df2['log_percentage'].max())
+cmap = plt.cm.viridis
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm._A = []
+
+# Draw the colorbar in the new axes (same height)
+cbar = fig.colorbar(sm, cax=cax)
+cbar.set_label('Log percentage of workers')
+
+# Format plot
+ax.set_title("Where Workers in the Tottenham Hostpur area live (Limited to London residences)", fontsize=14)
+ax.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+
+fig.savefig(os.path.join('..','outputs','session3','ths_area_worker_residence_london.png'), dpi=600)
+
+areas = ['Haringey','Enfield','Waltham Forest','Islington']
+geo_df3 = geo_df.loc[geo_df['ladnm'].isin(areas)]
+
+# Plotting
+fig, ax = plt.subplots(figsize=(10, 10))
+
+# Plot geometries colored by log_percentage
+geo_df3.plot(
+    column='log_percentage',
+    cmap='viridis',
+    linewidth=0.5,
+    edgecolor='white',
+    # legend=True,
+    # legend_kwds={'label': 'Log percentage of workers'},
+    ax=ax,
+    missing_kwds={
+        "color": "lightgrey",
+        "label": "No data",
+    },
+    alpha=0.8
+)
+cx.add_basemap(ax, crs=geo_df3.crs, source=cx.providers.OpenStreetMap.Mapnik)
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create a dummy mappable for the colorbar
+norm = mpl.colors.Normalize(vmin=geo_df3['log_percentage'].min(), vmax=geo_df3['log_percentage'].max())
+cmap = plt.cm.viridis
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm._A = []
+
+# Draw the colorbar in the new axes (same height)
+cbar = fig.colorbar(sm, cax=cax)
+cbar.set_label('Log percentage of workers', fontsize=12)
+
+# Format plot
+ax.set_title(f"Where Workers in the Tottenham Hostpur area live (Limited to {', '.join(areas)})", fontsize=14)
+ax.axis('off')
+
+plt.tight_layout()
+plt.show()
+
+
+fig.savefig(os.path.join('..','outputs','session3','ths_area_worker_residence_haringey_and_locality.png'), dpi=600)
+
+
+
+```
+
 NOTE: We may need to do something differnet with place of work stuff. but it does actually include it..
 
 Can we do something similar for a different stadium and see the area of effect?
@@ -331,6 +471,7 @@ Repeat the THS workers for another stadium
 # Emirates 
 
 ```{python}
+#| include: false
 # Get the records for emirates 
 emirates_code = 'E02000564'
 formatted_list = ', '.join([f"'{district}'" for district in [emirates_code]])
@@ -348,6 +489,7 @@ emirates_od_data = pd.read_sql(con=con, sql=query3)
 ```
 
 ```{python}
+#| include: false
 emirates_residents = emirates_od_data[emirates_od_data['msoa21cd_residence'] == emirates_code]
 #  Maybe chuck a bar plot for context here too
 ax = emirates_residents.groupby('msoa21cd_workplace')['count'].sum()\
@@ -364,6 +506,7 @@ ax.set_title(f'Top 20 place where residents in {emirates_code} work')
 ```
 
 ```{python}
+#| include: false
 # Example: Where do people who live in NP work?
 # np_residents = od_data2[od_data2['location']=='np_residence']
 
@@ -414,7 +557,7 @@ fig.show()
 ```
 
 ```{python}
-
+#| include: false
 emirates_workers = emirates_od_data[emirates_od_data['msoa21cd_workplace']==emirates_code]
 
 
@@ -435,7 +578,7 @@ ax.set_title(f'Top 20 places where workers in {emirates_code} live');
 ```
 
 ```{python}
-
+#| include: false
 residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 
@@ -483,7 +626,7 @@ fig.show()
 test with rescaled variable
 
 ```{python}
-
+#| include: false
 residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
