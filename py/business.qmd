@@ -1049,3 +1049,57 @@ fig.savefig(os.path.join('..','outputs','session3','business_spending.png'), dpi
 
 ```
 
+
+```{python}
+subset = all_stadia_df.loc[(all_stadia_df['rgn21nm'] == 'London')]
+subset['distance_bin'] = pd.cut(subset['distance_km'], bins=np.arange(0, 51, 2))
+years = sorted(subset['year'].unique())
+top_pc = 5
+
+# --- Get global axis limits ---
+# X-axis range (midpoints of distance bins)
+x_vals = subset['distance_bin'].dropna().unique().categories.mid
+x_min, x_max = x_vals.min(), x_vals.max()
+
+# Y-axis range (all median merchant_index_spend values)
+y_vals = (
+    subset.groupby(['year', 'Stadium', 'distance_bin'], observed=True)['merchant_index_spend']
+    .median()
+    .dropna()
+)
+y_min, y_max = y_vals.min(), y_vals.max()
+
+for year in years:
+    year_data = subset[subset['year'] == year]
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    for stadium, stadium_data in year_data.groupby('Stadium'):
+        binned = stadium_data.groupby('distance_bin', observed=True)['merchant_index_spend'].median()
+        binned.index = binned.index.map(lambda x: x.mid)
+        colour = 'red' if stadium == 'Tottenham Hotspur Stadium' else 'gray'
+        ax.plot(binned.index, binned.values, color=colour, label=stadium if stadium == 'Tottenham Hotspur Stadium' else None)
+        
+        # Top % line
+        top_threshold = np.quantile(stadium_data['merchant_index_spend'], 1 - (top_pc / 100))
+        top_df = stadium_data[stadium_data['merchant_index_spend'] >= top_threshold]
+        range_top = top_df['distance_km'].median()
+        ax.axvline(x=range_top, linestyle='dashed', color=colour)
+        
+        if stadium == 'Tottenham Hotspur Stadium':
+            nudge_x = (x_max - x_min) * 0.02
+            ax.text(x=range_top + nudge_x, y=6, s=f'Avg dist top {top_pc}%: {round(range_top,0)}km',
+                    color='red', fontsize=10)
+
+    ax.set_xlim(x_min-1, x_max)
+    ax.set_ylim(y_min, y_max+1)
+    ax.set_title(f'Spending by Distance – {year}', fontsize=14)
+    ax.set_xlabel('Distance (km)')
+    ax.set_ylabel('Avg. proportion of spend')
+    ax.grid(True)
+    ax.legend(loc='upper right')
+    
+    plt.tight_layout()
+    plt.savefig(os.path.join('..', 'outputs', 'session3', f'business_spending_{year}.png'), dpi=600)
+    plt.show()
+
+```
