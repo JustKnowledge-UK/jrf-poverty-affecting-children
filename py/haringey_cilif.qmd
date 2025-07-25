@@ -1,9 +1,12 @@
 ---
-title: "Untitled"
+title: "Children in Low Income Families: Haringey and surrounding areas"
+author: Jolyon Miles-Wilson
+date: 2025-07-01
 format: html
 ---
 
 ```{python}
+# Packages and config
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -22,6 +25,12 @@ import numpy as np
 from sklearn.neighbors import BallTree, radius_neighbors_graph
 from scipy.spatial import cKDTree
 import janitor
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from shapely.geometry import Point
+import tqdm
+import io
+from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
@@ -31,26 +40,24 @@ db_params = dict(config['postgresql'])
 
 
 ```{python}
+# Data from databases (will need to be disambiguated for reprod.)
+
 with psycopg2.connect(**db_params) as con:
+    # East Coast Mainline geometry for the rail diving East-West Haringey
     query = '''SELECT *
                 FROM east_coast_mainline_geometry
                 '''
 
     trainline = gpd.read_postgis(query, con = con, geom_col='geometry')
 
+    # LAD boundaries for cutting the rail
     query2 = '''SELECT lad21nm, geometry 
                 FROM lad21_boundaries 
                 WHERE lad21nm = 'Haringey'
             '''
     haringey_gpd = gpd.read_postgis(query2, con = con, geom_col='geometry')
 
-    
-    query3 = '''SELECT *
-                FROM railway_track_locations
-                '''
-            
-    all_trainline = gpd.read_postgis(query3, con = con, geom_col='geometry')
-
+    # Get MSOA boudnaries for areas of interest for plotting CILIF data - we include Enfield and Waltham Forest becuase they're neighbours to Northumberland Park
     lads = ['Haringey','Enfield','Waltham Forest']
     formatted_list = ', '.join([f"'{lad}'" for lad in lads])
     query4 = f'''
@@ -66,66 +73,159 @@ with psycopg2.connect(**db_params) as con:
              '''
     msoa_gdf = gpd.read_postgis(con=con, sql=query4, geom_col='geometry')
 
+    # Get London msoas for subsetting data
+    query = '''
+            SELECT DISTINCT foo.msoa21cd
+            FROM pcode_census21_lookup foo
+            LEFT JOIN lad21_lookup loo
+            ON foo.ladnm = loo.lad21nm
+            WHERE loo.rgn21nm = 'London'
+            '''
+            
+    london_msoas = pd.read_sql(con=con, sql=query)
+    london_msoas = london_msoas['msoa21cd'].unique().tolist()
+
+    # Get just Haringey MSOAs
     query = '''
             SELECT DISTINCT msoa21cd 
             FROM pcode_census21_lookup
             WHERE ladnm = 'Haringey'
             '''
-    haringey_msoas = pd.read_sql(con=con, sql=query)
-                
+    haringey_msoas = pd.read_sql_query(query, con)['msoa21cd'].tolist()
 ```
 
+# Data
 
-Strange that the rail isn't perfectly aligned. Think this is as close as I'll get for now
+## Children in Low Income Families
 
-Next add in CILIF data
+Now bring in the CILIF data. 
+
+This was downloaded as .csv from https://stat-xplore.dwp.gov.uk/webapi/jsf/login.xhtml > Children in Low Income Families - Relative Low Income. The following selections were made:
+- All MSOAs in London as ROWS (MSOA codes, not names, were selected)
+- Single year of age up to and including 15 years as ROWS
+- Years 2014/15 to 2023/24 as COLUMNS
 
 ```{python}
-cilif_data = pd.read_csv(os.path.join('..','data','e&w_u16_low_income_families_msoa_2022-23.csv'))
+cilif_london = pd.read_csv(os.path.join('..','data','cilif_msoa_london.csv'), skiprows=8, skipfooter=14)
 
-cilif_data = cilif_data.rename(
+# Drop annotation columns
+cilif_london = cilif_london.loc[:, ~cilif_london.columns.str.contains("Annotations", na=False)]
+
+# Rename the first two columns for clarity
+cilif_london.rename(columns={cilif_london.columns[0]: "Area Code", cilif_london.columns[1]: "Age Band"}, inplace=True)
+
+# Forward fill the empty area rows
+cilif_london["Area Code"] = cilif_london["Area Code"].fillna(method='ffill')
+
+# Subset to just the total (as we're only interested in the whole 0-15 group, not individual years)
+cilif_london = cilif_london[cilif_london["Age Band"] == "Total"]
+
+# Drop unwanted columns
+cilif_london = cilif_london.drop(columns=['Age Band', 'Unnamed: 22'])
+
+# Reshape the data into long format
+cilif_london_long = cilif_london.melt(id_vars="Area Code", 
+                                      var_name="Year", 
+                                      value_name="Value")
+
+# Clean names and set var types
+cilif_london_long = janitor.clean_names(cilif_london_long)
+cilif_london_long['value'] = cilif_london_long['value'].astype(int)
+```
+
+## Population estimates
+
+```{python}
+# Get population estimates via NOMIS API
+file = os.path.join('..','data', 'london_population_msoa.pkl')
+if os.path.isfile(file)==False:   
+    # Build the query
+    base = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2014_1.csv?"
+    date = "date=latest"
+    age = "c_age=101...191"
+    gender = "gender=0"
+    measures = "measures=20100"
+
+    pop_ests_list = []
+
+    # Chunk the query because API doesn't want long strings
+    chunk_size = 100
+    for i in tqdm.tqdm(range(0, len(london_msoas), chunk_size)):
+        chunk = london_msoas[i:i + chunk_size]
+        geography = 'geography=' + ','.join(chunk)
+        query = base + geography + "&" + date + "&" + gender + "&" + age + "&" + measures
+
+        req = requests.get(query)
+        chunk_df = pd.read_csv(io.StringIO(req.content.decode('utf-8')))
+        pop_ests_list.append(chunk_df)
+
+    pop_ests = pd.concat(pop_ests_list, ignore_index=True)
+
+    pop_ests.to_pickle(file)
+else:
+    print('Data already acquired. Loading it')
+    with open(file, 'rb') as picklefile:
+        pop_ests = pickle.load(picklefile)
+
+
+pop_ests = janitor.clean_names(pop_ests)
+
+# Drop unwanted columns
+cols_to_keep = ['geography_name','geography_code','c_age','c_age_name','obs_value']
+
+pop_ests = pop_ests[cols_to_keep]
+
+# Get just under 16s and sum the population so we have 1 per msoa
+pop_ests_u15 = pop_ests.loc[pop_ests['c_age'] <= 116]
+pop_ests_u15 = pop_ests_u15.groupby(['geography_name','geography_code'])['obs_value'].sum().reset_index()
+
+pop_ests_u15 = pop_ests_u15.rename(
     columns = {
-        'msoa': 'msoa21nm',
-        'mnemonic':'msoa21cd',
-        'u16_percent_low_income_families':'percentage'
+        'geography_name':'msoa21nm',
+        'geography_code':'msoa21cd',
+        'obs_value':'population'
     }
 )
+```
 
-cols_to_keep = ['msoa21nm','msoa21cd', 'percentage']
+```{python}
+# Merge in population estimates, calculate percentage and decile (London-wide)
+cilif_london_long = cilif_london_long.merge(pop_ests_u15, how='left', left_on='area_code',right_on='msoa21cd')
 
-cilif_data = cilif_data[cols_to_keep]
-cilif_gdf = msoa_gdf.merge(cilif_data, how='left', on='msoa21cd')
+cilif_london_long['percentage'] = cilif_london_long['value'].div(cilif_london_long['population']).mul(100)
+
+# Assign reversed decile ranks: 1 = highest value, 10 = lowest value
+cilif_london_long['decile'] = cilif_london_long.groupby('year')['percentage']\
+    .transform(lambda x: pd.qcut(-x, q=10, labels=False, duplicates='drop') + 1)
+```
+
+# Plots
+
+## Children in Low Income Families - Percentage in 2023
+
+Showing positions of some areas and features within Haringey
+
+```{python}
+cilif_haringey_2023 = cilif_london_long.loc[(cilif_london_long['year']=='2022/23') & (cilif_london_long['msoa21cd'].isin(haringey_msoas))]
+cilif_gdf = msoa_gdf.merge(cilif_haringey_2023, how='right', on='msoa21cd')
 
 # Clip ECM geometries to Haringey
 ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
 ecm = ecm.to_crs(haringey_gpd.crs)
 ecm_clipped = gpd.clip(ecm, haringey_gpd)
-# all_trainline.crs = haringey_gpd.crs
 
 ```
 
 ```{python}
-fig, ax = plt.subplots(figsize=[8,8])
-
-cilif_gdf.plot(ax=ax,column='percentage', legend=True, legend_kwds=dict({'label': 'Percentage of low income families'}), alpha=0.7)
-ecm_clipped.plot(ax=ax, color='red')
-cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-ax.set_axis_off();
-```
-
-```{python}
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-
-# Get northumberland park centroid
+# Get northumberland park centroid for plotting label
 np = cilif_gdf.loc[cilif_gdf['msoa21cd']=='E02000398']
 np['centroid'] = np.geometry.centroid
 
-# get muswell hill north and south and dissovle into one, then get centroid
+# get muswell hill north and south and dissolve into one, then get centroid
 mh = cilif_gdf.loc[(cilif_gdf['msoa21cd']=='E02000417') | (cilif_gdf['msoa21cd']=='E02000410')]
 mh = mh.dissolve()
 mh['centroid'] = mh.geometry.centroid
 
-from shapely.geometry import Point
 # Create Point in WGS84 (lon, lat)
 ally_point = Point(-0.131911, 51.594341)
 ally_pally = gpd.GeoDataFrame(geometry=[ally_point], crs="EPSG:4326")
@@ -195,111 +295,29 @@ ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.999, s='Red line indicates approxima
 plt.tight_layout()
 fig.savefig(os.path.join('..','outputs','cilif_haringey.png'), dpi=600)
 ```
-```{python}
 
-# all_rail_clipped = gpd.clip(all_trainline, haringey_gpd)
+## Children in Low Income Families - Deciles 
 
-fig, ax = plt.subplots(1,1, figsize=[8,8])
-
-haringey_gpd.boundary.plot(ax=ax)
-# ecm_clipped.plot(ax=ax, color = 'red')
-ecm_clipped.plot(ax=ax, color = 'red')
-cx.add_basemap(ax, crs = haringey_gpd.crs, source=cx.providers.OpenStreetMap.Mapnik)
-```
-
-
-# CILIF over time
-
-First get the non-haringey areas of interest
+Including parts of Enflield and Waltham Forest
 
 ```{python}
+# Specify Northumberland Park geometry
 np_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd']=='E02000398']
-test = msoa_gdf.touches(np_gdf)
-
 target_geom = np_gdf.geometry.iloc[0]
 
-# Spatial join: find all geometries that touch it
+# Spatial join: find all geometries that touch NP
 touching = gpd.sjoin(msoa_gdf, np_gdf, predicate='touches')
 
-# Remove the target area from results (optional)
+# Remove the target area from results (probably not needed but good to be sure)
 touching = touching[touching['msoa21cd_left'] != 'E02000398']
 
 areas_to_add = touching['msoa21cd_left'].unique().tolist()
-
 ```
 
-note need pop ests by age too
-
-
 ```{python}
-cilif_london = pd.read_csv(os.path.join('..','data','cilif_msoa_london.csv'), skiprows=8, skipfooter=14)
-
-cilif_london = cilif_london.loc[:, ~cilif_london.columns.str.contains("Annotations", na=False)]
-
-# Step 2: Rename the first two columns for clarity
-cilif_london.rename(columns={cilif_london.columns[0]: "Area Code", cilif_london.columns[1]: "Age Band"}, inplace=True)
-
-cilif_london["Area Code"] = cilif_london["Area Code"].fillna(method='ffill')
-cilif_london = cilif_london[cilif_london["Age Band"] == "Total"]
-
-cilif_london = cilif_london.drop(columns=['Age Band', 'Unnamed: 22'])
-
-# Step 5: Reshape the data into long format
-cilif_london_long = cilif_london.melt(id_vars="Area Code", 
-                                      var_name="Year", 
-                                      value_name="Value")
-
-cilif_london_long = janitor.clean_names(cilif_london_long)
-
-cilif_london_long['value'] = cilif_london_long['value'].astype(int)
-
-
-```
-
-
-```{python}
-
-path = os.path.join('..', 'data', 'pop_msoa_age.csv')
-pop_ests = pd.read_csv(path, skiprows=6)
-
-pop_ests = janitor.clean_names(pop_ests)
-
-pop_ests[['msoa21cd', 'msoa21nm']] = pop_ests['2021_super_output_area_middle_layer'].str.split(' : ', expand=True)
-
-pop_ests = pop_ests.drop(columns='2021_super_output_area_middle_layer')
-
-
-pop_ests = pop_ests.melt(
-    id_vars=['msoa21cd','msoa21nm'],
-    var_name='age',
-    value_name='population'
-
-)
-
-pop_ests['age'] = pop_ests['age'].str.split('_').str[1]
-pop_ests['age_numeric'] = pd.to_numeric(pop_ests['age'], errors='coerce')
-
-pop_ests_u15 = pop_ests.loc[pop_ests['age_numeric'] <= 15]
-
-pop_ests_u15 = pop_ests_u15.groupby(['msoa21cd','msoa21nm'])['population'].sum().reset_index()
-
-
-```
-
-
-```{python}
-cilif_london_long = cilif_london_long.merge(pop_ests_u15, how='left', left_on='area_code',right_on='msoa21cd')
-
-cilif_london_long['percentage'] = cilif_london_long['value'].div(cilif_london_long['population']).mul(100)
-
-# Assign reversed decile ranks: 1 = highest value, 10 = lowest value
-cilif_london_long['decile'] = cilif_london_long.groupby('year')['percentage']\
-    .transform(lambda x: pd.qcut(-x, q=10, labels=False, duplicates='drop') + 1)
-```
-
-
-```{python}
-msoas_list = haringey_msoas['msoa21cd'].tolist() + areas_to_add
+# Calculate the difference in decile between 2014 and 2023
+# Add in areas of Enfield and Waltham Forest
+msoas_list = haringey_msoas + areas_to_add
 diff_df = cilif_london_long.loc[cilif_london_long['msoa21cd'].isin(msoas_list)]
 
 diff_df['start_year'] = diff_df['year'].str.split('/').str[0].astype(int)
@@ -322,75 +340,42 @@ diff_gdf = msoa_gdf.merge(pivot_df, how='right',on='msoa21cd')
 
 ```
 
-# in 2023
-
 ```{python}
 fig, ax = plt.subplots(figsize=[8,8])
 
 diff_gdf.plot(ax=ax, column='decile_2023', legend=False, alpha=0.7, edgecolor='black',linewidth=0.4)
 
+# Make the legend the same height as the plot
 divider = make_axes_locatable(ax)
 cax = divider.append_axes("right", size="5%", pad=0.1)
-
 # Create a dummy mappable for the colorbar
 norm = mpl.colors.Normalize(vmin=diff_gdf['decile_2023'].min(), vmax=diff_gdf['decile_2023'].max())
 cmap = plt.cm.viridis
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
 sm._A = []
-
 # Draw the colorbar in the new axes (same height)
 cbar = fig.colorbar(sm, cax=cax)
-cbar.set_label("Decile change")
+cbar.set_label("Decile")
 
 ax.set_axis_off()
 cx.add_basemap(ax, crs=diff_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-fig.suptitle(y=.73, t='Children in low income families: Decile change from 2014 to 2023')
+fig.suptitle(y=.73, t='Children in low income families in 2023')
+
+# Plot NP label and decile difference
 np = diff_gdf.loc[diff_gdf['msoa21cd'] == 'E02000398']
 np['centroid'] = np.geometry.centroid
 x, y = np['centroid'].iloc[0].x, np['centroid'].iloc[0].y
 np_decile_change = np['decile_2023'].astype(int).iloc[0]
-ax.text(x=x, y=y, s=f'NP\nDecile change = {np_decile_change}', ha='center', size=8)
+ax.text(x=x, y=y, s=f'NP\nDecile: {np_decile_change}', ha='center', size=8, color='white')
+
+fig.savefig(os.path.join('..','outputs','cilif_haringey_decile_2023.png'), dpi=600)
 ```
 
+## Children in Low Income Families - Decile change 2014-2023
+
+Including parts of Enfield and Waltham Forest
 
 ```{python}
-fig, ax = plt.subplots(figsize=[8,8])
-
-diff_gdf.plot(ax=ax, column='decile_diff', legend=False, alpha=0.7, edgecolor='black',linewidth=0.4)
-
-divider = make_axes_locatable(ax)
-cax = divider.append_axes("right", size="5%", pad=0.1)
-
-# Create a dummy mappable for the colorbar
-norm = mpl.colors.Normalize(vmin=diff_gdf['decile_diff'].min(), vmax=diff_gdf['decile_diff'].max())
-cmap = plt.cm.viridis
-sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
-sm._A = []
-
-# Draw the colorbar in the new axes (same height)
-cbar = fig.colorbar(sm, cax=cax)
-cbar.set_label("Decile change")
-
-ax.set_axis_off()
-cx.add_basemap(ax, crs=diff_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-fig.suptitle(y=.73, t='Children in low income families: Decile change from 2014 to 2023')
-np = diff_gdf.loc[diff_gdf['msoa21cd'] == 'E02000398']
-np['centroid'] = np.geometry.centroid
-x, y = np['centroid'].iloc[0].x, np['centroid'].iloc[0].y
-np_decile_change = np['decile_diff'].astype(int).iloc[0]
-ax.text(x=x, y=y, s=f'NP\nDecile change = {np_decile_change}', ha='center', size=8)
-
-fig.savefig(os.path.join('..','outputs','cilif_haringey_change_2014-23.png'), dpi=600)
-```
-
-
-```{python}
-import matplotlib.pyplot as plt
-import matplotlib as mpl
-from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import contextily as cx
-
 # Create a custom diverging colormap: red (low), grey (neutral), green (high)
 cmap = LinearSegmentedColormap.from_list(
     'custom_diverging',
@@ -419,21 +404,18 @@ diff_gdf.plot(
     linewidth=0.4
 )
 
+# Make legend same height as plot
 divider = make_axes_locatable(ax)
 cax = divider.append_axes("right", size="5%", pad=0.1)
-
 # Dummy mappable for colorbar
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
 sm._A = []
-
 cbar = fig.colorbar(sm, cax=cax)
 cbar.set_label("Decile change")
 
-# Map decoration
 ax.set_axis_off()
 cx.add_basemap(ax, crs=diff_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
 
-# Title
 fig.suptitle(y=.73, t='Children in low income families: Decile change from 2014 to 2023')
 
 
