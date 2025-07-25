@@ -446,7 +446,7 @@ cbar = fig.colorbar(sm, cax=cax)
 cbar.set_label('Log percentage of workers', fontsize=12)
 
 # Format plot
-ax.set_title(f"Where Workers in the Tottenham Hostpur area live (Limited to {', '.join(areas)})", fontsize=14)
+ax.set_title(f"Where Workers in the Tottenham Hostpur area live\n(Limited to {', '.join(areas)})", fontsize=14)
 ax.axis('off')
 
 plt.tight_layout()
