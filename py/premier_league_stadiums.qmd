@@ -1,8 +1,11 @@
 ---
-title: "Untitled"
+title: "Premier League Stadia and Poverty"
+author: Jolyon Miles-Wilson
+date: 2025-07-01
 format: html
 ---
 
+This script scrapes a table of Premier League Stadium locations from Wikipedia and joins it with Children in Low Income Families data to explore poverty in the vicinity of stadia across the country.
 
 ```{python}
 import pandas as pd
@@ -296,13 +299,17 @@ else:
     stadiums_gdf = None
 ```
 
-
 ```{python}
 # Filter to just stadiums that are currently open
 stadiums_gdf = stadiums_gdf.loc[stadiums_gdf['Closed'].isna()]
+
+# Save the gdf
+stadiums_gdf.to_pickle(os.path.join('..','data','stadia_gdf.pkl'))
 ```
 
 # Plot
+
+The plot below shows the Premier League Stadia listed on Wikipedia
 
 ```{python}
 # Create figure and axis
@@ -390,7 +397,7 @@ else:
         msoa_gdf = pickle.load(file)
 ```
 
-Use spatial join to locate stadiums in MSOAs
+Use spatial join to locate stadiums within MSOAs
 
 ```{python}
 
@@ -425,6 +432,7 @@ points_gdf = points_gdf.to_crs(epsg=27700) # maybe go back to web scraping and r
 
 # Spatial join to find which polygon each point falls in
 joined = gpd.sjoin(points_gdf, msoa_gdf, how='left', predicate='within')
+
 # with psycopg2.connect(**db_params) as con:
 #     joined.to_postgis(name="premier_league_stadia_locations", con=con, if_exists="replace", index=False)
 
@@ -435,50 +443,13 @@ joined.to_pickle(os.path.join('..','data','stadium_locations.pkl'))
 # Finding nearest neighbours
 
 ```{python}
-# # Get point coordinates (n_targets x 2)
-# target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
-
-# # Get MSOA centroid coordinates (n_msoas x 2)
-# msoa_gdf['centroid'] = msoa_gdf.geometry.centroid
-# msoa_coords = np.array([[pt.x, pt.y] for pt in msoa_gdf['centroid']])
-
-# # Radius in meters
-# radius_m = 1000
-
-# # Build KD-tree for fast spatial query
-# tree = cKDTree(msoa_coords)
-
-# # Query neighbors within radius for each point
-# neighbors_dict = {}
-
-# for i, point in enumerate(target_coords):
-#     indices = tree.query_ball_point(point, r=radius_m)
-#     neighbor_codes = msoa_gdf.iloc[indices]['msoa21cd'].tolist()
-#     point_id = joined.iloc[i].get('Stadium', f'point_{i}')  # Use a unique ID or fallback
-#     neighbors_dict[point_id] = neighbor_codes
-
-
-# results = []
-# for i, row in joined.iterrows():
-#     point_id = row.get('Stadium', f'point_{i}')
-#     containing_msoa = row['msoa21cd']  # MSOA containing the point (may be NaN if outside)
-#     neighbors = neighbors_dict.get(point_id, [])
-#     results.append({
-#         'stadium': point_id,
-#         'containing_msoa': containing_msoa,
-#         'neighboring_msoas': neighbors
-#     })
-
-```
-
-```{python}
 # Get point coordinates (n_targets x 2)
 target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
 
 # Radius in meters
 radius_m = 1000
 
-# Method 1: Using buffer and intersects (Recommended - most accurate)
+# Specify a buffer and find the MSOAs that intersect it
 neighbors_dict = {}
 for i, row in joined.iterrows():
     point_geom = row.geometry
@@ -493,24 +464,6 @@ for i, row in joined.iterrows():
     
     neighbors_dict[point_id] = neighbor_codes
 
-# Alternative Method 2: Using distance calculation (also accurate but potentially slower)
-# Uncomment below if you prefer this approach:
-
-# neighbors_dict = {}
-# for i, row in joined.iterrows():
-#     point_geom = row.geometry
-#     point_id = row.get('Stadium', f'point_{i}')
-#     
-#     # Calculate distance from point to each MSOA geometry
-#     distances = msoa_gdf.geometry.distance(point_geom)
-#     
-#     # Find MSOAs within the radius
-#     within_radius = distances <= radius_m
-#     neighbor_codes = msoa_gdf[within_radius]['msoa21cd'].tolist()
-#     
-#     neighbors_dict[point_id] = neighbor_codes
-
-# Rest of your code remains the same
 results = []
 for i, row in joined.iterrows():
     point_id = row.get('Stadium', f'point_{i}')
@@ -523,29 +476,9 @@ for i, row in joined.iterrows():
     })
 ```
 
-```{python}
-# # Collect all MSOA codes from containing_msoa and neighboring_msoas
-# all_msoas = []
-
-# for res in results:
-#     # Add containing MSOA if it exists and is not None or NaN
-#     if res['containing_msoa']:
-#         all_msoas.append(res['containing_msoa'])
-#     # Add all neighboring MSOAs
-#     all_msoas.extend(res['neighboring_msoas'])
-
-# # Get unique MSOAs by converting to a set, then back to a list if needed
-# unique_msoas = list(set(all_msoas))
-
-# # unique_msoas now holds all unique MSOA codes from both categories
-# print(unique_msoas)
-
-# neighbors_gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(unique_msoas)]
-```
 
 ```{python}
-from collections import defaultdict
-# Step 1: Build a mapping from MSOA to associated stadium(s)
+# Build a mapping from MSOA to associated stadium(s)
 msoa_to_stadiums = defaultdict(set)
 for res in results:
     stadium = res['stadium']
@@ -555,7 +488,7 @@ for res in results:
         # print(neighbor)
         msoa_to_stadiums[neighbor].add(stadium)
 
-# Step 2: Flatten the mapping into a DataFrame
+# Flatten the mapping into a DataFrame
 msoa_stadium_rows = []
 for msoa, stadiums in msoa_to_stadiums.items():
     for stadium in stadiums:
@@ -566,12 +499,15 @@ for msoa, stadiums in msoa_to_stadiums.items():
 
 msoa_stadium_df = pd.DataFrame(msoa_stadium_rows)
 
-# Step 3: Join this info with the original MSOA GeoDataFrame
+# Join this info with the original MSOA GeoDataFrame
 neighbors_gdf = msoa_gdf.merge(msoa_stadium_df, on='msoa21cd', how='inner')
 neighbors_gdf.to_pickle(os.path.join('..','data','stadium_neighbours.pkl'))
 ```
 
+Plot Haringey to check how the neighbour identification has gone
+
 ```{python}
+tott = stadiums_gdf.loc[stadiums_gdf['Stadium'] == 'Tottenham Hotspur Stadium']
 # Plot Haringey to check
 haringey = neighbors_gdf.loc[neighbors_gdf['stadium'].str.contains('Tottenham')]
 tott = tott.to_crs(epsg=27700)
@@ -602,49 +538,65 @@ absolute = absolute.iloc[:,[1,3]]
 absolute.columns = ['msoa_name','count']
 ```
 
+
+
+Get population estimates for under 16s in small areas. NOMIS API request would be preferable but there are issues with joining alter with this approach. In lieu I've used the census bulk downloads, Table 007 from https://www.nomisweb.co.uk/sources/census_2021_bulk
+
 ```{python}
-# Get population estimates by age (thank you Ollie for having this in db!)
+# Get population estimates via NOMIS API
+# file = os.path.join('..','data', 'london_population_msoa.pkl')
+# if os.path.isfile(file)==False:   
+#     # Build the query
+#     base = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2014_1.csv?"
+#     date = "date=latest"
+#     age = "c_age=101...191"
+#     gender = "gender=0"
+#     measures = "measures=20100"
 
-# with psycopg2.connect(**db_params) as con:
-#     query = '''
-#             SELECT msoa21nm, msoa21cd, SUM(count) AS population
-#             FROM census21_msoa_population_by_age 
-#             WHERE age < 16
-#             GROUP BY msoa21nm, msoa21cd
-#     '''
-#     pop_ests = pd.read_sql(query, con=con)
+#     pop_ests_list = []
 
+#     # Chunk the query because API doesn't want long strings
+#     chunk_size = 100
+#     for i in tqdm.tqdm(range(0, len(london_msoas), chunk_size)):
+#         chunk = london_msoas[i:i + chunk_size]
+#         geography = 'geography=' + ','.join(chunk)
+#         query = base + geography + "&" + date + "&" + gender + "&" + age + "&" + measures
 
-# alternative avoiding db
-# url = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2027_1.data.csv?date=latest&geography=637536588...637536596,637540863,637541007,637536597...637536614,637540768,637536615...637536631,637540769,637540864,637536632...637536653,637541008...637541011,637536654...637536666,637541006,637538323...637538386,637540972,637539688...637539722,637541053...637541055,637535843...637535865,637540848,637541043...637541052,637535866...637535954,637535819...637535842,637540798,637540799,637541042,637536667...637536744,637537855...637537883,637537896...637537916,637540980,637540981,637537838...637537854,637537884...637537895,637537917...637537934,637538008...637538071,637539184...637539194,637540836,637539195...637539243,637540826,637539244...637539254,637540953,637539255...637539286,637540839,637539287...637539332,637535141...637535249,637540856,637540865...637540870,637540933...637540936,637535250...637535281,637540950,637540951,637535282...637535333,637540908...637540914,637535334...637535551,637540883...637540885,637535552...637535573,637540886,637540887,637535574...637535653,637536745...637536774,637540770,637541027,637541028,637536775...637536814,637540771,637540846,637540847,637536815...637536835,637541029,637536836...637536882,637539723...637539728,637540989,637539729...637539738,637540990,637540991,637539739...637539770,637540992,637540993,637539771...637539794,637535654...637535753,637540952,637535754...637535818,637540760,637540800,637540801,637540824,637540825,637536295...637536353,637540896...637540899,637536354...637536542,637540809,637540817,637540830,637540831,637536543...637536587,637536883...637536944,637540772,637540774,637540776,637540807,637540808,637540915,637540916,637536945...637536982,637540791,637540858,637540859,637541030,637539601...637539606,637539617...637539636,637539678...637539687,637540818,637540819,637541018,637541019,637539607...637539616,637539637...637539677,637541020,637541021,637538072...637538086,637540784,637538087...637538117,637540979,637538118...637538131,637540785,637538132...637538141,637540827,637538142...637538153,637540761,637538154...637538163,637540872,637540873,637539333...637539343,637540777,637539344...637539374,637540773,637539375...637539411,637540775,637540917,637540918,637539412...637539417,637540820,637540821,637539418...637539457,637540822,637540823,637539458...637539495,637539795...637539823,637540857,637539824...637539836,637540860,637539837...637539850,637540792,637539851...637539891,637536983...637537027,637540998,637540999,637537028...637537059,637540925,637539976...637540014,637540086...637540153,637540932,637540154...637540192,637540430...637540452,637540763,637540453...637540463,637540996,637540997,637540464...637540493,637540654...637540738,637535955...637536075,637540764,637540766,637540850...637540855,637540986...637540988,637536076...637536116,637540762,637536117...637536195,637540767,637540894,637540895,637536196...637536223,637540765,637536224...637536294,637540849,637537300...637537319,637540832,637540833,637537320...637537339,637540888,637540889,637537340...637537372,637540816,637540878,637540954,637540955,637537668...637537686,637540960,637540961,637537651...637537667,637537687...637537702,637537768...637537779,637541034,637541035,637537780...637537788,637540782,637537789...637537837,637540828,637540829,637541033,637538454...637538534,637540928,637540929,637538535...637538552,637540875,637541004,637541005,637538553...637538597,637540930,637540931,637538598...637538624,637538861...637538895,637538913...637538939,637541036,637541037,637538970...637538993,637539496...637539575,637540982,637540983,637539576...637539586,637540861,637540862,637541000,637541001,637539587...637539600,637541002,637541003,637540193...637540203,637540210...637540237,637538940...637538958,637541038,637538994...637539008,637541040,637538896...637538912,637541041,637538959...637538969,637541039,637540252...637540281,637540204...637540209,637540238...637540251,637540783,637534209...637534230,637540756,637534231...637534270,637540904,637540905,637534271...637534297,637540743,637534298...637534330,637540906,637540907,637534331...637534366,637540740,637540745,637540747,637534367...637534392,637541063,637534393...637534434,637540746,637540937,637540938,637534435...637534470,637540749,637540919...637540922,637534471...637534505,637540751,637534506...637534531,637540744,637540879...637540882,637540941...637540944,637534532...637534555,637540871,637540874,637541056...637541059,637534556...637534615,637540752,637534616...637534643,637540753,637540837,637534644...637534704,637540754,637534705...637534730,637540750,637540923,637540924,637534731...637534828,637540758,637534829...637534860,637540741,637540742,637540755,637540958,637540959,637534861...637534920,637540945...637540949,637534921...637534946,637540757,637540876,637540877,637540967...637540970,637534947...637535000,637540759,637540892,637540893,637535001...637535023,637540793,637535024...637535052,637540810,637540811,637541060...637541062,637535053...637535116,637541031,637541032,637535117...637535140,637537373...637537464,637540890,637540891,637537465...637537477,637541016,637541017,637537478...637537545,637540962...637540966,637537546...637537601,637540778,637540926,637540927,637537602...637537632,637541022,637541023,637537633...637537650,637537703...637537767,637540780,637540781,637538387...637538397,637540814,637540815,637538398...637538453,637538699...637538733,637540786,637540795,637538734...637538797,637540779,637540787,637540788,637538798...637538846,637541024...637541026,637538847...637538860,637539009...637539021,637540994,637540995,637539022...637539038,637540812,637540813,637539039...637539111,637540789,637539112...637539123,637540834,637540835,637539124...637539169,637540790,637539170...637539183,637539892...637539927,637540971,637541064,637539928...637539960,637540841,637539961...637539975,637540282...637540307,637540794,637540308...637540401,637540748,637540402...637540417,637540796,637540418...637540429,637540494...637540593,637537060...637537135,637540842...637540845,637540900...637540903,637537136...637537159,637540802,637540803,637537160...637537189,637541012...637541015,637537190...637537220,637540939,637540940,637537221...637537236,637540797,637537276...637537299,637540804...637540806,637537935...637538007,637540739,637540594...637540653,637540973...637540976,637537237...637537275,637538270...637538276,637540838,637540840,637538277...637538322,637540956,637540957,637538164...637538182,637540977,637540978,637538183...637538269,637538625...637538698,637540984,637540985,637540015...637540085,637541065...637541119,637541464,637541120...637541154,637541468...637541470,637541172...637541179,637541465,637541180...637541219,637541463,637541220...637541248,637541472,637541249...637541264,637541462,637541471,637541265...637541298,637541413...637541458,637541466,637541467,637541299...637541329,637541336...637541412,637541155...637541171,637541459,637541461,637541330...637541335,637541460&c2021_age_102=0,1001...1003&measures=20100'
+#         req = requests.get(query)
+#         chunk_df = pd.read_csv(io.StringIO(req.content.decode('utf-8')))
+#         pop_ests_list.append(chunk_df)
 
+#     pop_ests = pd.concat(pop_ests_list, ignore_index=True)
 
-# # Check if it's already downloaded
-# filepath = os.path.join('..', 'data', 'msoa_u15_pop.csv')
-# if os.path.isfile(filepath)==False:
-#     req = requests.get(url)
-#     with open(filepath, 'wb') as output_file:
-#         output_file.write(req.content)
+#     pop_ests.to_pickle(file)
 # else:
 #     print('Data already acquired. Loading it')
+#     with open(file, 'rb') as picklefile:
+#         pop_ests = pickle.load(picklefile)
 
-# pop_ests = pd.read_csv(filepath)
 
-# pop_ests = pop_ests.rename(columns={
-#     'geography':'msoa21nm',
-#     'geography_code': 'msoa21cd',
-#     'obs_value': 'population'})
+# pop_ests = janitor.clean_names(pop_ests)
 
-# # Just get cols of interest
-# pop_ests = pop_ests[['msoa21nm','msoa21cd','c2021_age_102','population']]
+# # Drop unwanted columns
+# cols_to_keep = ['geography_name','geography_code','c_age','c_age_name','obs_value']
 
-# # Drop the 'all usual residents' row for each msoa
-# pop_ests = pop_ests.loc[pop_ests['c2021_age_102']>0]
+# pop_ests = pop_ests[cols_to_keep]
 
-# # get the sum of the age groups
-# pop_ests = pop_ests.groupby(['msoa21nm', 'msoa21cd'])['population'].sum().reset_index()
+# # Get just under 16s and sum the population so we have 1 per msoa
+# pop_ests_u15 = pop_ests.loc[pop_ests['c_age'] <= 116]
+# pop_ests_u15 = pop_ests_u15.groupby(['geography_name','geography_code'])['obs_value'].sum().reset_index()
 
-# Fourht try - above nomis reuqest misses data for some reason
+# pop_ests_u15 = pop_ests_u15.rename(
+#     columns = {
+#         'geography_name':'msoa21nm',
+#         'geography_code':'msoa21cd',
+#         'obs_value':'population'
+#     }
+# )
+```
+
+```{python}
+# NOMIS request is preferable but mis reuqest misses data for some reason
 filepath = os.path.join('..', 'data', 'census2021-ts007-msoa.csv')
 pop_ests = pd.read_csv(filepath)
 
@@ -668,7 +620,6 @@ pop_ests = pop_ests[['msoa21nm','msoa21cd','population']]
 ```
 
 ```{python}
-
 # Get MSOA11 to MSOA21 lookup
 import time
 
@@ -842,33 +793,6 @@ neighbors_gdf2 = (neighbors_gdf
 
 
 ```{python}
-# stadiums_gdf2 = stadiums_gdf.to_crs(epsg=27700)
-# temp = neighbors_gdf.loc[neighbors_gdf['stadium'].isin(['Anfield', 'Tottenham Hotspur Stadium'])]
-# # for stadium in temp['stadium'].unique():
-# for stadium in neighbors_gdf2['stadium'].unique():
-#     # print(stadium)
-
-#     msoa_temp_gdf = neighbors_gdf2.loc[neighbors_gdf2['stadium']==stadium]
-#     stadiums_temp_gdf = stadiums_gdf2.loc[stadiums_gdf2['Stadium']==stadium]
-
-#     fig, ax = plt.subplots(figsize=[8,8])
-#     msoa_temp_gdf.plot(ax=ax,column='relative_decile', edgecolor="black", legend = True,
-#     legend_kwds={'label': 'Decile'}, 
-#     vmin=1, vmax=10,
-#     alpha = 0.5)
-#     stadiums_temp_gdf.plot(ax=ax, color="red")
-#     plt.title(stadium)
-#     cx.add_basemap(ax, crs = msoa_temp_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-#     ax.set_axis_off()
-
-
-```
-
-why does tott have 8 points here? in data there are only six
-    - resolved. there were always 8 it's just preivously i was only plotting the haringey ones
-
-
-```{python}
 # get lookup again
 with psycopg2.connect(**db_params) as con:
     query = ''' SELECT DISTINCT msoa21cd, ladcd as lad21cd, ladnm 
@@ -882,7 +806,9 @@ with psycopg2.connect(**db_params) as con:
 relative3 = relative2.merge(msoa_lad_lookup, how='left', on='msoa21cd')
 ```
 
-# All stadia
+# Plots
+
+## All stadia
 
 ```{python}
 # use relative2 because this is all MSOAs
@@ -954,7 +880,7 @@ plt.show()
 
 ```
 
-# Just London stadia 
+## Just London stadia 
 
 ```{python}
 # use relative2 because this is all MSOAs
@@ -1036,53 +962,11 @@ plt.show()
 
 ```
 
-
-dean court has gone missing
-
-solved. for some reason pop ests from nomis api weren't complete. had to use bulk ts007 instead.
-
-```{python}
-test = neighbors_gdf2.loc[neighbors_gdf2['stadium']=='Dean Court']
-
-dean_court_msoas = [
-    'E02003182',
-    'E02003186',
-    'E02003187',
-    'E02003190']
-    
-dc_lookup = lookup.loc[lookup['msoa21cd'].isin(dean_court_msoas)]
-
-dc_relative = relative.loc[relative['msoa_code'].isin(dean_court_msoas)]
-
-dc_pop = pop_ests.loc[pop_ests['msoa21cd'].isin(dean_court_msoas)]
-```
-
-An MSOA in Middlesbrough has a child poverty rate higher than the child population. how the heck is this possible? Yeah it seems liek this is really deprived place - 40% of households are deprived in one dimension (https://www.ons.gov.uk/census/maps/choropleth/population/household-deprivation/hh-deprivation/household-is-deprived-in-one-dimension?geoLock=msoa&msoa=E02002498)
-
-It is also the case that the child pvoerty data includes children up to 19 years of age whereas teh population estimates i've used are under 18. maybe this adjustment alone will help the percnetages make more sense. making this change does indeed prevenet percentages > 100 thankfully
-
-More generally I think we need to decide what age groups to focus on.
-
-
-```{python}
-# investigate the high percentage areas
-subset = relative2.loc[relative2['percentage']>100]
-
-subset = relative2.loc[relative2['msoa21nm']=="Middlesbrough 003"]
-
-```
-
-CILIF data is using 2011 MSOAs
-
-population estimates are using 2021 MSOAs
-
-cam we get pop ests in 2011 units?
-
-or we look up 2011 pop ests to 2021s
-
+## Tottenham and 1km surrounding 
 
 ```{python}
 # Plot Tottenham agani with deciles this time
+tott = stadiums_gdf.loc[stadiums_gdf['Stadium'] == 'Tottenham Hotspur Stadium']
 haringey = neighbors_gdf2.loc[neighbors_gdf2['stadium'].str.contains('Tottenham')]
 tott = tott.to_crs(epsg=27700)
 north_park = neighbors_gdf2.loc[neighbors_gdf2['msoa21cd']=='E02000398']
@@ -1113,6 +997,18 @@ ax.set_axis_off()
 fig.savefig(os.path.join('..','outputs','tott_hs_1km_map.png'), dpi=800)
 
 ```
+
+## All stadia and 1km buffer 
+
+Reveals missing areas
+
+Possible cause:
+
+CILIF data is using 2011 MSOAs, population estimates are using 2021 MSOAs
+
+Can we get pop ests in 2011 units?
+
+Or we look up 2011 pop ests to 2021s
 
 
 ```{python}
@@ -1146,38 +1042,3 @@ for area, stadium in zip(las_stads.iloc[:,0], las_stads.iloc[:,1]):
     cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
     ax.set_axis_off()
 ```
-
-# investigate missing areas
-
-
-```{python}
-brentford = joined.loc[joined['msoa21nm'].str.contains('Hounslow',na=False)]
-```
-
-```{python}
-brentford_msoas = neighbors_dict['Brentford Community Stadium']
-
-gdf = msoa_gdf.loc[msoa_gdf['msoa21cd'].isin(brentford_msoas)]
-
-gdf.plot()
-```
-
-
-```{python}
-test = neighbors_gdf.loc[neighbors_gdf['msoa21cd'].isin(brentford_msoas)].reset_index(drop=True)
-test2 = neighbors_gdf2.loc[neighbors_gdf2['msoa21cd'].isin(brentford_msoas)].reset_index(drop=True)
-```
-
-
-```{python}
-test3 = relative.loc[relative['msoa_code']=='E02006973']
-```
-
-it looks like the geometry data is there but it's just that there are nas for the cilif data .seems likely this is due to change in msoa that hasn't worked in hte crosswalk
-
-
-```{python}
-test = lookup.loc[lookup['msoa21nm'].str.contains('Hounslow')]
-```
-
-hounslow 030 missing? why? could it be one of hte weird translations?
