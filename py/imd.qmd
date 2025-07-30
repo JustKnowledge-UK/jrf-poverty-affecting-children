@@ -1,11 +1,15 @@
 ---
 title: "IMD"
+author: Jolyon Miles-Wilson
+date: 2025-07-01
 format: 
     html:
         embed-resource: true
         code-fold: true
         warning: false
 ---
+
+This script plots the indices of deprivation for MSOAs within Haringey, highlighting the Northumberland Park MSOA. Indices of deprivation data can be retrieved from https://www.gov.uk/government/statistics/english-indices-of-deprivation-2019.
 
 ```{python}
 import psycopg2
@@ -15,19 +19,35 @@ import requests
 import pandas as pd
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
+from sqlalchemy import create_engine
 
+# Load DB config
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
-
 db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
 
 ```
 
-# Alternative approach crosswalking to MSOA
+Read in the IoD data, a LSOA-MSOA lookup, and population estimates for aggregating using population weights.
+
+Data sources:
+
+- IoD: https://www.gov.uk/government/statistics/english-indices-of-deprivation-2019
+- Lookup: https://geoportal.statistics.gov.uk/datasets/ons::output-area-2021-to-lsoas-to-msoas-to-lep-to-lad-may-2022-best-fit-lookup-in-en/about
+- Population estimates: https://www.nomisweb.co.uk/datasets/pestoa2021
 
 ```{python}
 # Read IOD from treehouse
-with psycopg2.connect(**db_params) as con:
+with engine.connect() as con:
     query = '''SELECT *
                 FROM iod_2019
                 '''
@@ -91,43 +111,11 @@ iod_msoa = grouped[['msoa11cd', 'lad21nm'] +
 
 
 ```
-```{python}
-# Read IOD from treehouse
-# with psycopg2.connect(**db_params) as con:
-#     query = '''SELECT DISTINCT foo.*, loo.lad21cd, loo.lad21nm, loo.msoa11cd
-#                 FROM iod_2019 foo
-#                 LEFT JOIN pcode_census11_lookup loo
-#                 ON foo.lsoa11cd = loo.lsoa11cd
-#                 WHERE loo.lad21nm = 'Haringey'
-              
-#                 '''
 
-#     haringey_iod = pd.read_sql(query, con = con)
-
-
-
-
-# haringey_iod.columns = (
-#     haringey_iod.columns
-#     .str.replace(',', '', regex=True)   # Remove ','
-#     .str.replace('index_idaci_','', regex=True) # Remove suffix for income affecting children
-#     .str.replace('idaopi_','', regex=True) # Remove suffix for income affecting older people
-# )
-
-```
-
-Next steps:
-
-- Create a vector of the domains of interest
-- Plot the rank of each domain 
-    - Maybe this could be on a scale that positions it within the decile?
-    - Plot across all domains of interest in one plot?
-    - Highlight NP in black with others in grey and higher alpha
-
+Plot IOD for Haringey, highlighting Northumberland Park MSOA in black and other Haringey MSOAs in grey.
 
 ```{python}
-import re
-
+# Select subset of domains so plot isn't information overload
 domains_of_interest = [
     'income',
     'employment',
@@ -146,7 +134,7 @@ domains_of_interest = [
     # 'outdoors_sub-domain',
 ]
 
-
+# Reorder columns
 rank_cols = [
     col for col in iod_msoa.columns
     if 'rank' in col
@@ -157,8 +145,10 @@ rank_cols = [
 
 iod_msoa_ranks = iod_msoa[['msoa11cd','lad21nm'] + rank_cols]
 
+
 haringey_ranks = iod_msoa_ranks[iod_msoa_ranks['lad21nm']=='Haringey']
 
+# Pivot longer
 haringey_ranks_long = haringey_ranks.melt(
     id_vars = 'msoa11cd',
     value_vars = rank_cols,
@@ -168,17 +158,11 @@ haringey_ranks_long = haringey_ranks.melt(
 # Clean up domain names (remove '_rank' suffix)
 haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rate_rank', '')
 haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rank', '')
-```
-
-
-```{python}
+# Make title case and swap underscores for spaces 
 domains_of_interest = haringey_ranks_long['domain'].unique()
-# Or with a more complex function
 def clean_domain_name(domain):
     return domain.replace('_', ' ').title()
-
 domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
-
 # Apply the mapping to the dataframe
 haringey_ranks_long['clean_domain'] = haringey_ranks_long['domain'].map(domain_dict)
 
