@@ -1,6 +1,10 @@
 ---
 title: "Business spending"
-format: html
+author: Jolyon Miles-Wilson
+date: 2025-07-01
+format: 
+    html:
+        embed-resources: true
 ---
 
 ```{python}
