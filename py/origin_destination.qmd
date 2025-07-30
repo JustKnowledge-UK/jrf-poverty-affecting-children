@@ -1,5 +1,7 @@
 ---
-title: "Untitled"
+title: "Origin destination analysis"
+author: Jolyon Miles-Wilson
+date: 2025-07-01
 format:    
     html:  
         embed-resources: true
@@ -10,7 +12,10 @@ execute:
 
 ---
 
+This script uses Census 2021 origin-destination data from https://www.nomisweb.co.uk/sources/census_2021_od to explore where Northubmerland Park residetns work, where workers in the area of Tottenham Hotspur Stadium live, and the residential distribution of workers in other stadium areas in London.
+
 ```{python}
+# Packages and config
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
@@ -30,26 +35,39 @@ from scipy.spatial import cKDTree
 import janitor
 import zipfile
 import glob
+from sqlalchemy import create_engine
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
 
 db_params = dict(config['postgresql'])
+
+# Load config
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
 ```
 
-
 ```{python}
-query = '''
+# Get Haringey MSOAs for subsetting later
+with engine.connect() as con:
+    query = '''
         SELECT DISTINCT msoa21cd
         FROM pcode_census21_lookup 
         WHERE ladnm = 'Haringey'
-        '''
+    '''
+    lookup = pd.read_sql(sql=query, con=con)
 
-
-with psycopg2.connect(**db_params) as con:
-    
-    lookup = pd.read_sql(con=con, sql=query)
-
+# For safe SQL query
 formatted_list = ', '.join([f"'{district}'" for district in lookup['msoa21cd'].tolist()])
 
 # query2 = f'''
@@ -59,16 +77,18 @@ formatted_list = ', '.join([f"'{district}'" for district in lookup['msoa21cd'].t
 #     OR msoa21cd_workplace IN ({formatted_list})
 #     '''
 
-# Union approach much more efficient. Union removes duplicates. note if I wanted duplciates I could use UNION ALL
-query3 = f'''SELECT * FROM census21_od_workplace_msoa
-            WHERE msoa21cd_residence IN ({formatted_list})
+# Union approach much more efficient. Union removes duplicates. Note if I wanted to keep duplicates I could use UNION ALL
+with engine.connect() as con:
+    query3 = f'''SELECT * FROM census21_od_workplace_msoa
+                WHERE msoa21cd_residence IN ({formatted_list})
 
-            UNION
+                UNION
 
-            SELECT * FROM census21_od_workplace_msoa
-            WHERE msoa21cd_workplace IN ({formatted_list});
-            '''
-od_data = pd.read_sql(con=con, sql=query3)
+                SELECT * FROM census21_od_workplace_msoa
+                WHERE msoa21cd_workplace IN ({formatted_list});
+                '''
+    od_data = pd.read_sql(con=con, sql=query3)
+
 
 od_data.to_pickle(os.path.join('..','data','od_data.pkl'))
 
@@ -86,59 +106,13 @@ cols_to_keep = [
 ]
 od_data2 = od_data2[cols_to_keep]
 
-# # Get output areas for Northumberland Park
-# query = '''
-#         SELECT DISTINCT oa21cd FROM 
-#         pcode_census21_lookup 
-#         WHERE msoa21cd = 'E02000398'
-
-# '''
-
-# np_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
-
-# np_oas.to_pickle(os.path.join('..','data','np_oas.pkl'))
-# output_dir = os.path.join('..','data')
-# # Pickle 
-# with open(os.path.join(output_dir, 'np_oas.pkl'), 'wb') as f:
-#     pickle.dump(np_oas, f)
-
-
-
-# query = '''
-#         SELECT DISTINCT oa21cd FROM 
-#         pcode_census21_lookup 
-#         WHERE msoa21cd = 'E02006794'
-
-# '''
-# ths_oas = pd.read_sql(con=con, sql=query)['oa21cd'].tolist()
-# ths_oas.to_pickle(os.path.join('..','data','ths_oas.pkl'))
-
-# # Pickle 
-# with open(os.path.join(output_dir, 'ths_oas.pkl'), 'wb') as f:
-#     pickle.dump(ths_oas, f)
-
-# This is erroneous - drop for now
-# conditions = [
-#     (od_data2['msoa21cd_residence'] == 'E02000398'),
-#     (od_data2['msoa21cd_workplace'] == 'E02000398'),
-#     (od_data2['msoa21cd_residence'] == 'E02006794'),
-#     (od_data2['msoa21cd_workplace']== 'E02006794')
-# ]
-
-# choices = ['np_residence', 'np_workplace','ths_residence','ths_workplace']
-
-# # Apply the conditions
-# od_data2['location'] = np.select(conditions, choices, default='other')
-
 np_code = 'E02000398'
 ths_code = 'E02006794'
 ```
 
-How to explore this?
-
-I think count the employment by workplace adn see wehre they're coming from. we can then label counts absed on location
-
 # Where do NP residents work
+
+First take a look at where Northumberland Park residents work using an interactive map.
 
 ```{python}
 #| include: false
@@ -162,17 +136,20 @@ ax.set_title(f'Top 20 place where residents in {np_code} work')
 # Example: Where do people who live in NP work?
 # np_residents = od_data2[od_data2['location']=='np_residence']
 
+# Just get the workplace
 workplace_counts = np_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
 workplace_counts['percentage'] = workplace_counts['count'].div(workplace_counts['count'].sum()) * 100
 
+# Get the MSOA boundaries of the workplaces
 areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+with engine.connect() as con:
+    query = f'''
+            SELECT * 
+            FROM msoa21_boundaries
+            WHERE msoa21cd IN ({formatted_list})
+            '''
+    msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
 
 msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf1.pkl'))
 
@@ -210,6 +187,8 @@ fig.show()
 
 # Where do THS workers live
 
+Now look at where people who work in the Tottenham Hotspur Stadium area live using an interactive map
+
 ```{python}
 # ths_workers = od_data2[od_data2['location']=='ths_workplace']
 ths_workers = od_data2[od_data2['msoa21cd_workplace']==ths_code]
@@ -230,16 +209,21 @@ ax.set_title(f'Top 20 places where workers in {ths_code} live')
 ```
 ```{python}
 #| include: false
+
+# just look at the residences
 residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 
+# Get the MSOA boundaries of the residences
 areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
+
+with engine.connect() as con:
+    query = f'''
+            SELECT * 
+            FROM msoa21_boundaries
+            WHERE msoa21cd IN ({formatted_list})
+            '''
 msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
 msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf2.pkl'))
 geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
@@ -274,65 +258,11 @@ fig.show()
 
 ```
 
-
-
-```{python}
-# etst with log
-residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
-residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
-residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
-
-areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398','E02006794']
-formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
-msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf2.pkl'))
-geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
-# geo_df['count'] = geo_df['count'].fillna(0)
-
-import plotly.express as px
-
-# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
-geo_df = geo_df.to_crs(epsg=4326)
-
-# Create the Plotly choropleth
-fig = px.choropleth_mapbox(
-    geo_df,
-    geojson=geo_df.geometry,
-    locations=geo_df.index,  # any unique identifier
-    color='log_percentage',
-    hover_name='msoa21cd',  # Optional: show code or name
-    hover_data={'percentage': ':.2f'},
-    color_continuous_scale="Viridis",
-    mapbox_style="carto-positron",
-    center={"lat": geo_df.geometry.centroid.y.mean(), 
-            "lon": geo_df.geometry.centroid.x.mean()},
-    zoom=9,  # Adjust depending on your area
-    opacity=0.6
-)
-
-fig.update_layout(
-    title="Where THS Workers Live (MSOA level)",
-    margin={"r":0,"t":30,"l":0,"b":0}
-)
-fig.show()
-
-
-```
+Plot static maps of London and Haringey for easier presentation
 
 ```{python}
 # static version
-import geopandas as gpd
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import os
 
-# Assuming ths_workers, con are already defined
 residence_counts = ths_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
 residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
 residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
@@ -340,16 +270,17 @@ residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
 # Include specific additional areas
 areas_of_interest = residence_counts['msoa21cd_residence'].tolist() + ['E02000398', 'E02006794']
 formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-    SELECT DISTINCT foo.*, loo.ladnm, poo.rgn21nm
-    FROM msoa21_boundaries foo
-    LEFT JOIN pcode_census21_lookup loo
-    ON foo.msoa21cd = loo.msoa21cd
-    LEFT JOIN lad21_lookup poo
-    ON loo.ladnm = poo.lad21nm
-    WHERE foo.msoa21cd IN ({formatted_list})
-'''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+with engine.connect() as con:
+    query = f'''
+        SELECT DISTINCT foo.*, loo.ladnm, poo.rgn21nm
+        FROM msoa21_boundaries foo
+        LEFT JOIN pcode_census21_lookup loo
+        ON foo.msoa21cd = loo.msoa21cd
+        LEFT JOIN lad21_lookup poo
+        ON loo.ladnm = poo.lad21nm
+        WHERE foo.msoa21cd IN ({formatted_list})
+    '''
+    msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
 
 # Optional: Save for reuse
 msoa_gdf.to_pickle(os.path.join('..', 'data', 'msoa_gdf3.pkl'))
@@ -360,9 +291,6 @@ geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd
 # Ensure CRS is appropriate for plotting
 geo_df = geo_df.to_crs(epsg=3857)  # Web Mercator for plotting with Matplotlib
 
-```
-
-```{python}
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib as mpl
 
@@ -454,19 +382,7 @@ plt.show()
 
 
 fig.savefig(os.path.join('..','outputs','session3','ths_area_worker_residence_haringey_and_locality.png'), dpi=600)
-
-
-
 ```
-
-NOTE: We may need to do something differnet with place of work stuff. but it does actually include it..
-
-Can we do something similar for a different stadium and see the area of effect?
-
-
-also maybe think about where people are working as in working pattern
-
-Repeat the THS workers for another stadium
 
 # Emirates 
 
@@ -488,227 +404,33 @@ query3 = f'''SELECT * FROM census21_od_workplace_msoa
 emirates_od_data = pd.read_sql(con=con, sql=query3)
 ```
 
-```{python}
-#| include: false
-emirates_residents = emirates_od_data[emirates_od_data['msoa21cd_residence'] == emirates_code]
-#  Maybe chuck a bar plot for context here too
-ax = emirates_residents.groupby('msoa21cd_workplace')['count'].sum()\
-    .div(emirates_residents['count'].sum())\
-    .mul(100)\
-    .sort_values(ascending=False)\
-    .head(20)\
-    .plot(kind='barh')
-
-ax.set_xlabel('Percentage of Total Residence Population (%)')
-ax.set_ylabel('MSOA Workplace Code')
-ax.set_title(f'Top 20 place where residents in {emirates_code} work')
-
-```
-
-```{python}
-#| include: false
-# Example: Where do people who live in NP work?
-# np_residents = od_data2[od_data2['location']=='np_residence']
-
-workplace_counts = emirates_residents.groupby('msoa21cd_workplace')['count'].sum().reset_index()
-workplace_counts['percentage'] = workplace_counts['count'].div(workplace_counts['count'].sum()) * 100
-
-areas_of_interest = workplace_counts['msoa21cd_workplace'].tolist() + ['E02000398','E02006794']
-formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
-
-msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf1.pkl'))
-
-geo_df = msoa_gdf.merge(workplace_counts, left_on='msoa21cd', right_on='msoa21cd_workplace', how='left')
-# geo_df['count'] = geo_df['count'].fillna(0)
-
-import plotly.express as px
-
-# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
-geo_df = geo_df.to_crs(epsg=4326)
-
-# Create the Plotly choropleth
-fig = px.choropleth_mapbox(
-    geo_df,
-    geojson=geo_df.geometry,
-    locations=geo_df.index,  # any unique identifier
-    color='percentage',
-    hover_name='msoa21cd',  # Optional: show code or name
-    color_continuous_scale="Viridis",
-    mapbox_style="carto-positron",
-    center={"lat": geo_df.geometry.centroid.y.mean(), 
-            "lon": geo_df.geometry.centroid.x.mean()},
-    zoom=9,  # Adjust depending on your area
-    opacity=0.6
-)
-
-fig.update_layout(
-    title="Where Residents Work (MSOA level)",
-    margin={"r":0,"t":30,"l":0,"b":0}
-)
-fig.show()
-
-
-```
-
-```{python}
-#| include: false
-emirates_workers = emirates_od_data[emirates_od_data['msoa21cd_workplace']==emirates_code]
-
-
-#  Maybe chuck a bar plot for context here too
-# ths_workers.groupby('msoa21cd_residence')['count'].sum().sort_values(ascending=False).head(20).plot(kind='barh')
-
-ax = emirates_workers.groupby('msoa21cd_residence')['count'].sum()\
-    .div(emirates_workers['count'].sum())\
-    .mul(100)\
-    .sort_values(ascending=False)\
-    .head(20)\
-    .plot(kind='barh')
-
-ax.set_xlabel('Percentage of Total Workplace Population (%)')
-ax.set_ylabel('MSOA Residence Code')
-ax.set_title(f'Top 20 places where workers in {emirates_code} live');
-
-```
-
-```{python}
-#| include: false
-residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
-residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
-
-areas_of_interest = residence_counts['msoa21cd_residence'].tolist() 
-formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
-msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf3.pkl'))
-
-geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
-# geo_df['count'] = geo_df['count'].fillna(0)
-
-import plotly.express as px
-
-# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
-geo_df = geo_df.to_crs(epsg=4326)
-
-# Create the Plotly choropleth
-fig = px.choropleth_mapbox(
-    geo_df,
-    geojson=geo_df.geometry,
-    locations=geo_df.index,  # any unique identifier
-    color='percentage',
-    hover_name='msoa21cd',  # Optional: show code or name
-    color_continuous_scale="Viridis",
-    mapbox_style="carto-positron",
-    center={"lat": geo_df.geometry.centroid.y.mean(), 
-            "lon": geo_df.geometry.centroid.x.mean()},
-    zoom=9,  # Adjust depending on your area
-    opacity=0.6
-)
-
-fig.update_layout(
-    title=f"Where {emirates_code} workers Live (MSOA level)",
-    margin={"r":0,"t":30,"l":0,"b":0}
-)
-fig.show()
-
-```
-
-test with rescaled variable
-
-```{python}
-#| include: false
-residence_counts = emirates_workers.groupby('msoa21cd_residence')['count'].sum().reset_index()
-residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()) * 100
-residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
-
-areas_of_interest = residence_counts['msoa21cd_residence'].tolist() 
-formatted_list = ', '.join([f"'{district}'" for district in areas_of_interest])
-query = f'''
-        SELECT * 
-        FROM msoa21_boundaries
-        WHERE msoa21cd IN ({formatted_list})
-        '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
-msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf3.pkl'))
-
-geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
-# geo_df['count'] = geo_df['count'].fillna(0)
-
-import plotly.express as px
-
-# Make sure geometry is in WGS84 (EPSG:4326) for Plotly
-geo_df = geo_df.to_crs(epsg=4326)
-
-# Create the Plotly choropleth
-fig = px.choropleth_mapbox(
-    geo_df,
-    geojson=geo_df.geometry,
-    locations=geo_df.index,  # any unique identifier
-    color='log_percentage',
-    hover_name='msoa21cd',  # Optional: show code or name
-    hover_data={'percentage':':.2f'},
-    color_continuous_scale="Viridis",
-    mapbox_style="carto-positron",
-    center={"lat": geo_df.geometry.centroid.y.mean(), 
-            "lon": geo_df.geometry.centroid.x.mean()},
-    zoom=9,  # Adjust depending on your area
-    opacity=0.6
-)
-
-fig.update_layout(
-    title=f"Where {emirates_code} workers Live (MSOA level)",
-    margin={"r":0,"t":30,"l":0,"b":0}
-)
-fig.show()
-
-```
-
-can we incroproate distnace into this?
-
-e.g. percetnage x distacne, in bins or simply a 'within 1km' and 'beyond 1km'?
-
-or some bars comparing all stadia
-
-for comparing two areas, do i need to scale taking into account the data for both areas? THS looks like it has lots of employment in nearby earas but actually hte coutns are lwo
-
 # Exploring all stadia workzones
 
 Plan:
 
 1. Use stadia locations as filter for workplace locations in od_data request
-2. Use stadium neighbours to flag areas within 1km of the stadium (note exclude the stadium area from this list) and areas beyond 1km of the stadium.
+2. Use stadium neighbours to flag areas within 1km of the stadium (note exclude the stadium area from this list) and areas beyond 1km of the stadium. This data was produced in py/premier_league_stadiums.qmd
 
 ```{python}
-# Load the stadium locations
+# Load the stadium locations. 
 with open(os.path.join('..','data','stadium_locations.pkl'), "rb") as input_file:
     stadia = pickle.load(input_file)
 
 with open(os.path.join('..','data','stadium_neighbours.pkl'), "rb") as input_file:
     stadium_neighbours = pickle.load(input_file)
-```
 
-
-```{python}
+# Work out the percentage for each distance for each stadium and add to list
 results = []
 for stadium in stadia['Stadium'].unique():
     stadium_msoa = stadia.loc[stadia['Stadium']==stadium,'msoa21cd'].tolist()[0]
     region = stadia.loc[stadia['Stadium']==stadium,'rgn21nm'].tolist()[0]
     formatted_list = ', '.join([f"'{district}'" for district in [stadium_msoa]])
 
-    query = f'''SELECT * FROM census21_od_workplace_msoa
-                WHERE msoa21cd_workplace IN ({formatted_list});
-                '''
-    stadium_workers = pd.read_sql(con=con, sql=query)
+    with engine.connect() as con:
+        query = f'''SELECT * FROM census21_od_workplace_msoa
+                    WHERE msoa21cd_workplace IN ({formatted_list});
+                    '''
+        stadium_workers = pd.read_sql(con=con, sql=query)
 
     # Get msoas within 1km
     msoas_within_1km = stadium_neighbours.loc[stadium_neighbours['stadium']==stadium, 'msoa21cd'].unique().tolist()
@@ -736,14 +458,10 @@ for stadium in stadia['Stadium'].unique():
 
     results.append(residence_counts)
 
+# Concatenate the list into a single df
 all_results = pd.concat(results).reset_index(drop=True)
 
-```
-
-Now we plot
-
-```{python}
-import matplotlib.pyplot as plt
+# Plot
 import seaborn as sns
 
 custom_order = ['Stadium','Within 1km', 'Beyond 1km']
@@ -764,12 +482,7 @@ ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
 plt.tight_layout()
 plt.show()
 
-```
-
-Just London
-
-
-```{python}
+# Just London
 
 custom_order = ['Stadium','Within 1km', 'Beyond 1km']
 
