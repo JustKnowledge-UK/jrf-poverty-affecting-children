@@ -1,5 +1,5 @@
 ---
-title: "Untitled"
+title: "Business spending"
 format: html
 ---
 
@@ -23,15 +23,31 @@ from scipy.spatial import cKDTree
 import janitor
 import zipfile
 import glob
+from sqlalchemy import create_engine
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
 
 db_params = dict(config['postgresql'])
+
+# Load DB config
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
 ```
 
 ```{python}
-with psycopg2.connect(**db_params) as con:
+# Get postcodes in Haringey and Hackney (as a comparitor)
+with engine.connect() as con:
     query = '''
             SELECT DISTINCT pcds, ladnm 
             FROM pcode_census21_lookup
@@ -44,25 +60,26 @@ with psycopg2.connect(**db_params) as con:
 pcode_lookup['pcode_district'] = pcode_lookup['pcds'].str.split(' ').str[0]
 
 pcode_lookup.to_pickle(os.path.join('..','data','pcode_lookup.pkl'))
+
+# Get Haringey postcode boundaries
 haringey_pcode_districts = pcode_lookup.loc[pcode_lookup['ladnm']=='Haringey','pcode_district'].unique().tolist()
-
 pcodes_of_interest = pcode_lookup['pcode_district'].unique().tolist()
-
-# Safely convert list to SQL-safe string
+# Convert list to SQL-safe string
 formatted_list = ', '.join([f"'{district}'" for district in haringey_pcode_districts])
-# with psycopg2.connect(**db_params) as con:
-query2 = f'''
-            SELECT * 
-            FROM postcode_district_boundaries
-            WHERE district IN ({formatted_list})
-            '''
-haringey_districts_gpd = gpd.read_postgis(query2, con=con, geom_col='geometry')
+with engine.connect() as con:
+    query2 = f'''
+                SELECT * 
+                FROM postcode_district_boundaries
+                WHERE district IN ({formatted_list})
+                '''
+    haringey_districts_gpd = gpd.read_postgis(query2, con=con, geom_col='geometry')
 
 haringey_districts_gpd.to_pickle(os.path.join('..','data','pcode_districts_haringey.pkl'))
 
 ```
 
 ```{python}
+# Get the cardspending data
 file = os.path.join('..','data', 'card_data.pkl')
 if os.path.isfile(file)==False:   
     url = 'https://www.nomisweb.co.uk/output/eop/postal_district_quarterly_indexed_map_data.zip'
@@ -128,6 +145,52 @@ card_data2 = card_data.loc[card_data['cardholder_location'].isin(pcodes_of_inter
 
 ```
 
+This script uses cardholder spending by postcode district to explore spending in the N17 (Tottenham) area and compares to other areas.
+
+Cardholder spending data was acquired from NOMIS here: https://www.nomisweb.co.uk/sources/economy_ccs
+
+Note that I believe the variable documentation on this page is inaccurate. Specifically, the definitions of cardholder_index_spend and merchant_index_spend are the wrong way round. The documentation describes the variables as follows: 
+
+- time_period_value: Which time period the data relates to. Format: YYYYQQ
+- Cardholder_location: A cardholder home postal district
+- Merchant_location: The postal district where merchants are located and spend took place.
+- Cardholder_index_spend: Proportion of total spend at merchants in the merchant location for cardholders based in the cardholder location.
+- Merchant_index_spend: Proportion of total spend by cardholders based in the cardholder location at merchants based in the merchant location.
+
+Based on the information that "The total value for each quarter at a cardholder or merchant location is indexed to 2019 Q1=100", we should expect that for Q1 in 2019, the sum of cardholder_index_spend for each merchant location should be approximately equal to 100. Similarly, for Q1 in 2019 the sum of merchant_index_spend for each cardholder_location should be approximately 100. This is not the case:
+
+```{python}
+q1_2019 = card_data.loc[card_data['time_period_value']=='2019Q1']
+test1 = q1_2019.groupby(['time_period_value','merchant_location'])['cardholder_index_spend'].sum().reset_index()
+test1.head(10)
+```
+
+```{python}
+test2 = q1_2019.groupby(['time_period_value','cardholder_location'])['merchant_index_spend'].sum().reset_index()
+test2.head(10)
+```
+
+But if we swap the definitions, the counts sum as expected. That is, in Q1 2019, the sum of cardholder_index_spend for each *cardholder_location* is approximately equal to 100, as is the sum of merchant_index_spend for each *merchant_location*.
+
+```{python}
+q1_2019 = card_data.loc[card_data['time_period_value']=='2019Q1']
+test3 = q1_2019.groupby(['time_period_value','cardholder_location'])['cardholder_index_spend'].sum().reset_index()
+test3.head(10)
+```
+
+``` {python}
+test4 = q1_2019.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
+test4.head(10)
+```
+
+I therefore believe (and the rest of this script assumes) that the indexes should instead be defined as:
+
+- Cardholder_index_spend: Proportion of total spend by cardholders based in the cardholder location at merchants based in the merchant location.
+    - This can be understood as: "Of all the money spent by cardholders from a specific location (Cardholder_location), how much was spent at merchants in a specific location (Merchant_location)?" 
+- Merchant_index_spend: Proportion of total spend at merchants in the merchant location for cardholders based in the cardholder location.
+    - This can be understood as: "Of all the money spent at merchants in a specific location (Merchant_location), how much came from cardholders who live in a specific location (Cardholder_location)?"
+
+
 # Test plot to visualise districts
 
 These seem like an OK size for use and differentiate areas in Haringey reasonably well
@@ -147,62 +210,20 @@ for idx, row in haringey_districts_gpd.iterrows():
 cx.add_basemap(ax, crs = haringey_districts_gpd.crs, source=cx.providers.OpenStreetMap.Mapnik)
 ```
 
-# Card spending
-
-cardholder_index_spend: Proportion of total spend at merchants in the merchant location by cardholders based in the cardholder location.
-
-This translates to: "Of all the money spent at merchants in a specific location (Merchant_location), how much came from cardholders who live in a specific location (Cardholder_location)?"
-
-merchant_index_spend: Proportion of total spend by cardholders based in the cardholder location at merchants based in the merchant location.
-
-This translates to: "Of all the money spent by cardholders from a specific location (Cardholder_location), how much was spent at merchants in a specific location (Merchant_location)?"
-
-NOTE I think the above are the wrong way round
-
-2019Q1 adds to 100. So merchant index for a postcode in 2019Q1 is describing the proportion of spending at merchants in that postcode by cardholders in cardholder locations. Then subsequent quarters are describing the proprotion of spendign at merchants in that postcdoe adn that quarter by cardholders in cardholder location, divided by the total spending at merchants in that postcode in 2019Q1.
-
 ## Spending at Northumberland Park
+
+Let's look at spending by distance. To do this we first need to calculate the distance of each postcode from NP.
 
 ```{python}
 n17_merchant = card_data2.loc[card_data2['merchant_location'] == 'N17']
-
-# plot to explore
-fig, ax = plt.subplots(figsize = [8,8])
-# Create the scatter plot
-ax.scatter(x=n17_merchant['year_month'], y=n17_merchant['cardholder_index_spend'])
-```
-
-The proportions don't add up in the way you'd expect, but could this be to do with redaction etc.?
-
-```{python}
-# First check that proportions add to 100 as expected
-test = card_data.groupby(['time_period_value'])['cardholder_index_spend'].sum()
-# assert (test.round(6) == 1).all()  # Should be True if all sums ≈ 1.0
-
-test2 = card_data.groupby(['time_period_value','cardholder_location'])['merchant_index_spend'].sum().reset_index()
-
-test3 = card_data.groupby(['time_period_value','merchant_location'])['cardholder_index_spend'].sum().reset_index()
-
-# 2019s add to 100, but not as the documentation describes. I think the documentation is just wrong
-q1_2019 = card_data.loc[card_data['time_period_value']=='2019Q1']
-test4 = q1_2019.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
-
-test5 = q1_2019.groupby(['time_period_value','cardholder_location'])['cardholder_index_spend'].sum().reset_index()
-
-test6 = card_data.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
-```
-
-Maybe we want to look at spending by distacne
-
-```{python}
-
+# Get a list of all the postcodes that feature in the NP merchant data
 unique_combinations = n17_merchant.drop_duplicates(subset=['cardholder_location','merchant_location'])[['cardholder_location','merchant_location']]
 
 unique_combinations_list = np.unique(unique_combinations.values.flatten()).tolist()
 
 formatted_list = ', '.join([f"'{district}'" for district in unique_combinations_list])
 
-with psycopg2.connect(**db_params) as con:
+with engine.connect() as con:
     query2 = f'''
              SELECT * 
              FROM postcode_district_boundaries
@@ -213,7 +234,7 @@ with psycopg2.connect(**db_params) as con:
 geoms_of_interest.to_pickle(os.path.join('..','data','geoms_of_interest1.pkl'))
 
 
-# Get centroids
+# Get centroids of these areas
 geoms_of_interest['centroid'] = geoms_of_interest.geometry.centroid
 # Convert centroids to wgs84 in two steps using geoseries (this is becuase geodesic needs wgs84)
 centroids_gs = gpd.GeoSeries(geoms_of_interest['centroid'], crs=geoms_of_interest.crs)
@@ -221,7 +242,7 @@ centroids_wgs84 = centroids_gs.to_crs(epsg=4326)
 # Add the new crs centroids back into geoms_of_interest
 geoms_of_interest['centroid'] = centroids_wgs84
 
-# Step 1: Join geometries for cardholders and merchants
+# Join geometries for cardholders and merchants
 df = unique_combinations.merge(geoms_of_interest[['district','centroid']].rename(columns={
     'district': 'cardholder_location',
     'centroid': 'cardholder_centroid'
@@ -232,6 +253,7 @@ df = df.merge(geoms_of_interest[['district','centroid']].rename(columns={
     'centroid': 'merchant_centroid'
 }), on='merchant_location', how='left')
 
+# Now calculate the distance
 from geopy.distance import geodesic
 
 # Calculate the distance using a function
@@ -252,12 +274,15 @@ df['distance_km'] = df.apply(calc_distance, axis=1)
 ```
 
 ```{python}
+# Plot for 2023
 df2 = df.merge(n17_merchant, how='right',on=['merchant_location','cardholder_location'])
 
 df2_2023 = df2.loc[df2['year']==2023]
+# Get the mean of spend for each cardholder location
 df2_2023['ch_avg_2023'] = df2_2023.groupby('cardholder_location')['cardholder_index_spend'].transform('mean')
 df2_2023 = df2_2023.drop_duplicates(subset=['cardholder_location'])
 
+# Specify a top percentage for labelling
 top_pc = 1
 avg_2023 = np.mean(df2_2023['ch_avg_2023'])
 top_1pc = np.quantile(df2_2023['ch_avg_2023'], q=[1-(top_pc/100)])[0]
@@ -297,7 +322,7 @@ Exploring the areas with above 1% spend
 top_pc_districts = df2_2023.loc[df2_2023['ch_avg_2023'] > top_1pc, 'cardholder_location'].tolist()
 # Safely convert list to SQL-safe string
 formatted_list = ', '.join([f"'{district}'" for district in top_pc_districts])
-with psycopg2.connect(**db_params) as con:
+with engine.connect() as con:
     query2 = f'''
              SELECT * 
              FROM postcode_district_boundaries
@@ -309,23 +334,7 @@ top_pc_gdf.to_pickle(os.path.join('..','data','top_pc_gdf.pkl'))
 
 top_pc_gdf['centroid'] = top_pc_gdf.geometry.centroid
 
-```
 
-```{python}
-fig, ax = plt.subplots(1,1, figsize = [8,8])
-
-top_pc_gdf.plot(ax=ax, alpha=0.5, edgecolor='black')
-# Add labels at centroids
-for idx, row in top_pc_gdf.iterrows():
-    x = row['centroid'].x
-    y = row['centroid'].y
-    label = row['district']  
-    ax.text(x, y, label, fontsize=8, ha='center', va='center', color='black')
-cx.add_basemap(ax, crs = top_pc_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-ax.set_axis_off()
-```
-
-```{python}
 combined1 = top_pc_gdf.merge(df2_2023,how='left',left_on='district',right_on='cardholder_location')
 
 fig, ax = plt.subplots(1,1, figsize = [8,8])
@@ -341,60 +350,14 @@ cx.add_basemap(ax, crs = combined1.crs, source=cx.providers.OpenStreetMap.Mapnik
 ax.set_axis_off()
 ```
 
-Focusing on areas < 100km away
-
-```{python}
-top_pc_districts2 = df2_2023.loc[(df2_2023['ch_avg_2023'] > top_1pc) & (df2_2023['distance_km'] < 100), 'cardholder_location'].tolist()
-# Safely convert list to SQL-safe string
-formatted_list = ', '.join([f"'{district}'" for district in top_pc_districts2])
-with psycopg2.connect(**db_params) as con:
-    query2 = f'''
-             SELECT * 
-             FROM postcode_district_boundaries
-             WHERE district IN ({formatted_list})
-             '''
-    top_pc_gdf2 = gpd.read_postgis(query2, con=con, geom_col='geometry')
-
-top_pc_gdf2.to_pickle(os.path.join('..','data','top_pc_gdf2.pkl'))
-
-top_pc_gdf2['centroid'] = top_pc_gdf2.geometry.centroid
-
-fig, ax = plt.subplots(1,1, figsize = [8,8])
-
-top_pc_gdf2.plot(ax=ax, alpha=0.5, edgecolor='black')
-# Add labels at centroids
-for idx, row in top_pc_gdf2.iterrows():
-    x = row['centroid'].x
-    y = row['centroid'].y
-    label = row['district']  
-    ax.text(x, y, label, fontsize=8, ha='center', va='center', color='black')
-cx.add_basemap(ax, crs = top_pc_gdf2.crs, source=cx.providers.OpenStreetMap.Mapnik)
-ax.set_axis_off()
-```
-
-```{python}
-combined2 = top_pc_gdf2.merge(df2_2023,how='left',left_on='district',right_on='cardholder_location')
-
-fig, ax = plt.subplots(1,1, figsize = [8,8])
-
-combined2.plot(ax=ax, column='ch_avg_2023', legend=True, legend_kwds={'label': 'Average proprotion of spending in N17'}, alpha=0.5, edgecolor='black')
-# Add labels at centroids
-for idx, row in combined2.iterrows():
-    x = row['centroid'].x
-    y = row['centroid'].y
-    label = row['district']  
-    ax.text(x, y, label, fontsize=8, ha='center', va='center', color='black')
-cx.add_basemap(ax, crs = combined2.crs, source=cx.providers.OpenStreetMap.Mapnik)
-ax.set_axis_off()
-```
-
 Focusing on areas in London
 
 ```{python}
 top_pc_districts3 = df2_2023.loc[(df2_2023['ch_avg_2023'] > top_1pc) & (df2_2023['distance_km'] < 20), 'cardholder_location'].tolist()
 # Safely convert list to SQL-safe string
 formatted_list = ', '.join([f"'{district}'" for district in top_pc_districts3])
-with psycopg2.connect(**db_params) as con:
+
+with engine.connect() as con:
     query2 = f'''
              SELECT * 
              FROM postcode_district_boundaries
@@ -406,22 +369,6 @@ top_pc_gdf3.to_pickle(os.path.join('..','data','top_pc_gdf3.pkl'))
 
 top_pc_gdf3['centroid'] = top_pc_gdf3.geometry.centroid
 
-fig, ax = plt.subplots(1,1, figsize = [8,8])
-
-top_pc_gdf3.plot(ax=ax, alpha=0.5, edgecolor='black')
-# Add labels at centroids
-for idx, row in top_pc_gdf3.iterrows():
-    x = row['centroid'].x
-    y = row['centroid'].y
-    label = row['district']  
-    ax.text(x, y, label, fontsize=8, ha='center', va='center', color='black')
-cx.add_basemap(ax, crs = top_pc_gdf3.crs, source=cx.providers.OpenStreetMap.Mapnik)
-ax.set_axis_off()
-```
-
-Combine with data to plot choropleth
-
-```{python}
 combined3 = top_pc_gdf3.merge(df2_2023, how='left',left_on='district',right_on='cardholder_location')
 
 fig, ax = plt.subplots(1,1, figsize = [8,8])
@@ -437,13 +384,14 @@ cx.add_basemap(ax, crs = combined3.crs, source=cx.providers.OpenStreetMap.Mapnik
 ax.set_axis_off()
 ```
 
-All areas
+Plot all areas just for info
 
 ```{python}
 all_districts = df2_2023['cardholder_location'].drop_duplicates().tolist()
 # Safely convert list to SQL-safe string
 formatted_list = ', '.join([f"'{district}'" for district in all_districts])
-with psycopg2.connect(**db_params) as con:
+
+with engine.connect() as con:
     query2 = f'''
              SELECT * 
              FROM postcode_district_boundaries
@@ -455,9 +403,6 @@ all_districts_gdf.to_pickle(os.path.join('..','data','top_pc_gdf.pkl'))
 
 all_districts_gdf['centroid'] = all_districts_gdf.geometry.centroid
 
-```
-
-```{python}
 combined4 = all_districts_gdf.merge(df2_2023,how='left',left_on='district',right_on='cardholder_location')
 
 fig, ax = plt.subplots(1,1, figsize = [8,8])
@@ -474,27 +419,16 @@ ax.set_axis_off()
 ```
 
 
-# N17 over time
-
-We could take the median for the whole year perhaps...
+Plot N17 over time (the first quarter of each year)
 
 ```{python}
-import matplotlib.pyplot as plt
-from adjustText import adjust_text
-import numpy as np
-import os
-import pickle
-import geopandas as gpd
-import contextily as cx
-import psycopg2
-
 years = sorted(df2['year'].unique().tolist())
 top_pc = 5
 n_years = len(years)
 
 # Prepare data for map plots (as in your second code block)
 yearly_combined = {}
-with psycopg2.connect(**db_params) as con:
+with engine.connect() as con:
     for year in years:
         df_year = df2[(df2['year'] == year) & (df2['quarter'] == 1)].copy()
         df_year = df_year.drop_duplicates(subset=['cardholder_location'])
@@ -502,7 +436,6 @@ with psycopg2.connect(**db_params) as con:
         top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
         top_districts = df_year[df_year['merchant_index_spend'] >= top_threshold]['cardholder_location'].tolist()
         formatted_list = ', '.join([f"'{district}'" for district in top_districts])
-
         query = f'''
             SELECT * 
             FROM postcode_district_boundaries
@@ -612,207 +545,10 @@ plt.show()
 fig.savefig(os.path.join('..','outputs','session3','spending_n17.png'), dpi=600)
 ```
 
-# E8 over time
 
-```{python}
-e8_merchant = card_data2.loc[card_data2['merchant_location'] == 'E8']
+Below we compare spending in all areas in London that have a Premier League Stadium so that we can compare with N17. 
 
-unique_combinations = e8_merchant.drop_duplicates(subset=['cardholder_location','merchant_location'])[['cardholder_location','merchant_location']]
-
-unique_combinations_list = np.unique(unique_combinations.values.flatten()).tolist()
-
-formatted_list = ', '.join([f"'{district}'" for district in unique_combinations_list])
-
-with psycopg2.connect(**db_params) as con:
-    query2 = f'''
-             SELECT * 
-             FROM postcode_district_boundaries
-             WHERE district IN ({formatted_list})
-             '''
-    geoms_of_interest = gpd.read_postgis(query2, con=con, geom_col='geometry')
-
-geoms_of_interest.to_pickle(os.path.join('..','data','geoms_of_interest1.pkl'))
-
-
-# Get centroids
-geoms_of_interest['centroid'] = geoms_of_interest.geometry.centroid
-# Convert centroids to wgs84 in two steps using geoseries (this is becuase geodesic needs wgs84)
-centroids_gs = gpd.GeoSeries(geoms_of_interest['centroid'], crs=geoms_of_interest.crs)
-centroids_wgs84 = centroids_gs.to_crs(epsg=4326)
-# Add the new crs centroids back into geoms_of_interest
-geoms_of_interest['centroid'] = centroids_wgs84
-
-# Step 1: Join geometries for cardholders and merchants
-df3 = unique_combinations.merge(geoms_of_interest[['district','centroid']].rename(columns={
-    'district': 'cardholder_location',
-    'centroid': 'cardholder_centroid'
-}), on='cardholder_location', how='left')
-
-df3 = df3.merge(geoms_of_interest[['district','centroid']].rename(columns={
-    'district': 'merchant_location',
-    'centroid': 'merchant_centroid'
-}), on='merchant_location', how='left')
-
-from geopy.distance import geodesic
-
-# Calculate the distance using a function
-def calc_distance(row):
-    ch_centroid = row['cardholder_centroid']
-    m_centroid = row['merchant_centroid']
-
-    if ch_centroid is not None and m_centroid is not None:
-        # Make sure they are shapely points
-        if hasattr(ch_centroid, 'x') and hasattr(m_centroid, 'x'):
-            point1 = (ch_centroid.y, ch_centroid.x)  # (lat, lon)
-            point2 = (m_centroid.y, m_centroid.x)
-            return geodesic(point1, point2).kilometers
-    return None
-
-df3['distance_km'] = df3.apply(calc_distance, axis=1)
-
-df3 = df3.merge(e8_merchant, how='right',on=['merchant_location','cardholder_location'])
-```
-```{python}
-import matplotlib.pyplot as plt
-from geopy.distance import geodesic
-import geopandas as gpd
-import contextily as cx
-import numpy as np
-import psycopg2
-import os
-import pickle
-
-top_pc = 5
-years = sorted(df3['year'].unique())
-n_years = len(years)
-
-### Step 1: Prepare map data ###
-yearly_combined = {}
-
-with psycopg2.connect(**db_params) as con:
-    for year in years:
-        df_year = df3[(df3['year'] == year) & (df3['quarter'] == 1)].copy()
-        df_year = df_year.drop_duplicates(subset=['cardholder_location'])
-
-        top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
-        top_districts = df_year[df_year['merchant_index_spend'] >= top_threshold]['cardholder_location'].tolist()
-        formatted_list = ', '.join([f"'{district}'" for district in top_districts])
-
-        query = f'''
-            SELECT * 
-            FROM postcode_district_boundaries
-            WHERE district IN ({formatted_list})
-        '''
-        gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
-        gdf['centroid'] = gdf.geometry.centroid
-        combined = gdf.merge(df_year, how='left', left_on='district', right_on='cardholder_location')
-        yearly_combined[year] = combined
-
-output_dir = os.path.join('..','data')
-# Pickle the dictionary
-with open(os.path.join(output_dir, 'yearly_combined2.pkl'), 'wb') as f:
-    pickle.dump(yearly_combined, f)
-
-# Global vmin/vmax for consistent color scale
-all_spend_values = pd.concat([gdf['merchant_index_spend'] for gdf in yearly_combined.values()])
-global_vmin = all_spend_values.min()
-global_vmax = all_spend_values.max()
-
-### Step 2: Set up 5x2 layout ###
-fig, axes = plt.subplots(nrows=n_years, ncols=2, figsize=(16, 6 * n_years))
-if n_years == 1:
-    axes = np.array([axes])  # Ensure 2D even for 1 row
-
-### Step 3: Plot each year ###
-for i, year in enumerate(years):
-    ax_scatter = axes[i, 0]
-    ax_map = axes[i, 1]
-
-    ### LEFT: SCATTER ###
-    df_year = df3[(df3['year'] == year) & (df3['quarter'] == 1)].copy()
-    avg_val = df_year['merchant_index_spend'].mean()
-    
-    ax_scatter.scatter(df_year['distance_km'], df_year['merchant_index_spend'], alpha=0.6)
-    ax_scatter.axhline(y=avg_val, color='r', linestyle='dashed')
-
-    # Label top 5%
-    top_threshold = np.quantile(df_year['merchant_index_spend'], 1 - (top_pc / 100))
-    top_df = df_year[df_year['merchant_index_spend'] >= top_threshold]
-    range_top = top_df['distance_km'].max()
-
-    for _, row in top_df.iterrows():
-        ax_scatter.text(
-            row['distance_km'],
-            row['merchant_index_spend'],
-            row['cardholder_location'],
-            fontsize=8,
-            alpha=0.7
-        )
-
-    ax_scatter.set_title(f"Distance vs Spend (E8) - Q1 {year}")
-    ax_scatter.set_xlabel("Distance (km)")
-    ax_scatter.set_ylabel("Merchant Index Spend")
-
-    ax_scatter.text(
-        ax_scatter.get_xlim()[1],
-        ax_scatter.get_ylim()[0]*5,
-        s=f"Red dashed line = average ({round(avg_val, 2)})\nTop {top_pc}% labelled",
-        size=8,
-        ha='right'
-    )
-
-    ax_scatter.text(
-        ax_scatter.get_xlim()[1] * .95,
-        ax_scatter.get_ylim()[1] * .95,
-        s=f"Top {top_pc}% range = {round(range_top,2)}km\n# top areas = {len(top_df)}\nTotal areas = {len(df_year)}",
-        ha='right',
-        va='top'
-    )
-
-    ### RIGHT: MAP ###
-    gdf = yearly_combined[year]
-    gdf.plot(
-        ax=ax_map,
-        column='merchant_index_spend',
-        legend=True,
-        legend_kwds={'label': f'Merchant Index Spend'},
-        alpha=0.5,
-        edgecolor='black',
-        vmin=global_vmin,
-        vmax=global_vmax
-    )
-
-    for _, row in gdf.iterrows():
-        x = row['centroid'].x
-        y = row['centroid'].y
-        ax_map.text(x, y, row['district'], fontsize=8, ha='center', va='center')
-
-    cx.add_basemap(ax_map, crs=gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
-    ax_map.set_title(f"Top {top_pc}% Cardholder Districts - Q1 {year}")
-    ax_map.set_axis_off()
-
-    # range_top_map = gdf['distance_km'].max()
-    # ax_map.text(
-    #     ax_map.get_xlim()[1],
-    #     ax_map.get_ylim()[0],
-    #     s=f"Top {top_pc}% range = {round(range_top_map,2)}km",
-    #     ha='right',
-    #     va='top'
-    # )
-
-plt.tight_layout()
-plt.show()
-
-fig.savefig(os.path.join('..','outputs','session3','spending_e8.png'), dpi=600)
-
-```
-```{python}
-# test = e8_merchant.groupby(['year','quarter','merchant_location'])['merchant_index_spend'].sum().reset_index()
-
-# test4 = q1_2019.groupby(['time_period_value','merchant_location'])['merchant_index_spend'].sum().reset_index()
-```
-
-# new
+To do this we find use the locations of stadia to identify their postcodes, then calculate the distance of each spending postcode from the stadium postcode as we did above. Then we plot over time and stadia.
 
 ```{python}
 with open(os.path.join('..','data','stadium_locations.pkl'), "rb") as input_file:
@@ -821,16 +557,16 @@ with open(os.path.join('..','data','stadium_locations.pkl'), "rb") as input_file
 msoas_of_interest = stadia['msoa21cd'].unique().tolist()
 formatted_list = ', '.join([f"'{district}'" for district in msoas_of_interest])
 
-# with psycopg2.connect(**db_params) as con:
-query = f'''
-        SELECT DISTINCT foo.pcds, foo.msoa21cd, foo.ladnm, loo.rgn21nm
-        FROM pcode_census21_lookup foo
-        LEFT JOIN lad21_lookup loo
-        ON foo.lad21cd = loo.lad21cd
-        WHERE foo.msoa21cd IN ({formatted_list})
-        '''
+with engine.connect() as con:
+    query = f'''
+            SELECT DISTINCT foo.pcds, foo.msoa21cd, foo.ladnm, loo.rgn21nm
+            FROM pcode_census21_lookup foo
+            LEFT JOIN lad21_lookup loo
+            ON foo.lad21cd = loo.lad21cd
+            WHERE foo.msoa21cd IN ({formatted_list})
+            '''
 
-pcode_lookup = pd.read_sql(con=con, sql=query)
+    pcode_lookup = pd.read_sql(con=con, sql=query)
 
 # Get the first part for pcode district
 pcode_lookup['pcode_district'] = pcode_lookup['pcds'].str.split(' ').str[0]
@@ -850,25 +586,19 @@ card_data3 = card_data3.merge(pcode_lookup2[['pcode_district','ladnm','rgn21nm',
 card_data3_median = card_data3.groupby(['year','cardholder_location','merchant_location','ladnm','rgn21nm','Stadium'], as_index=False)['merchant_index_spend'].median()
 
 
-```
-
-Now calculate distances
-
-```{python}
-
+# Calculate distances
 unique_combinations = card_data3_median.drop_duplicates(subset=['cardholder_location','merchant_location'])[['cardholder_location','merchant_location']]
 
 unique_combinations_list = np.unique(unique_combinations.values.flatten()).tolist()
 
 formatted_list = ', '.join([f"'{district}'" for district in unique_combinations_list])
-
-# with psycopg2.connect(**db_params) as con:
-query2 = f'''
-            SELECT * 
-            FROM postcode_district_boundaries
-            WHERE district IN ({formatted_list})
-            '''
-geoms_of_interest = gpd.read_postgis(query2, con=con, geom_col='geometry')
+with engine.connect() as con:
+    query2 = f'''
+                SELECT * 
+                FROM postcode_district_boundaries
+                WHERE district IN ({formatted_list})
+                '''
+    geoms_of_interest = gpd.read_postgis(query2, con=con, geom_col='geometry')
 
 geoms_of_interest.to_pickle(os.path.join('..','data','geoms_of_interest3.pkl'))
 
@@ -912,56 +642,10 @@ df['distance_km'] = df.apply(calc_distance, axis=1)
 all_stadia_df = df.merge(card_data3_median, how='right',on=['merchant_location','cardholder_location'])
 ```
 
+Plot lines per year, plots per stadium
 
 ```{python}
-subset = all_stadia_df.loc[(all_stadia_df['year']==2019) & (all_stadia_df['rgn21nm']=='London')]
-fig, ax = plt.subplots(figsize = [8,8])
 
-# Group by 'stadium' and plot each group as a line
-for stadium, group in subset.groupby('Stadium'):
-    group = group.sort_values('distance_km')  # Ensure proper line plotting
-    ax.plot(group['distance_km'], group['merchant_index_spend'], label=stadium)
-
-
-# Add legend, labels, title
-ax.set_xlabel('Distance')
-ax.set_ylabel('Merchant Index Spend')
-ax.set_title('Merchant Spend vs Distance by Stadium (2019)')
-ax.legend(title='Stadium', bbox_to_anchor=(1, 1), loc='upper right')
-ax.grid(True)
-ax.set_yscale('log')
-
-
-plt.tight_layout
-
-```
-
-
-```{python}
-subset = all_stadia_df.loc[(all_stadia_df['year']==2019) & (all_stadia_df['rgn21nm']=='London')]
-subset['distance_bin'] = pd.cut(subset['distance_km'], bins=np.arange(0, 51, 1))  # 1km bins
-
-fig, ax = plt.subplots(figsize=[10, 8])
-for stadium, group in subset.groupby('Stadium'):
-    binned = group.groupby('distance_bin')['merchant_index_spend'].median()
-    binned.index = binned.index.map(lambda x: x.mid)  # use midpoint of bin for x-axis
-    ax.plot(binned.index, binned.values, label=stadium)
-
-ax.set_xlabel('Distance (km)')
-ax.set_ylabel('Avg Merchant Index Spend')
-ax.set_title('Merchant Spend vs Distance by Stadium (2019)')
-ax.legend(title='Stadium', bbox_to_anchor=(1.05, 1), loc='upper left')
-ax.grid(True)
-plt.tight_layout()
-plt.show()
-
-```
-
-
-```{python}
-import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
 subset = all_stadia_df.loc[(all_stadia_df['rgn21nm']=='London')]
 subset['distance_bin'] = pd.cut(subset['distance_km'], bins=np.arange(0, 51, 1))
 
@@ -991,9 +675,9 @@ plt.show()
 
 ```
 
+Plot lines per stadium, plots per year with Tottenham highlighted in red (this was what was used in session 3)
 
 ```{python}
-
 # Binned, tott highlighted, lines per stadium, plots per year
 subset = all_stadia_df.loc[(all_stadia_df['rgn21nm']=='London')]
 subset['distance_bin'] = pd.cut(subset['distance_km'], bins=np.arange(0, 51, 2))
@@ -1049,6 +733,7 @@ fig.savefig(os.path.join('..','outputs','session3','business_spending.png'), dpi
 
 ```
 
+Plot each of the above as a seperate plot (this was used in session 3)
 
 ```{python}
 subset = all_stadia_df.loc[(all_stadia_df['rgn21nm'] == 'London')]
