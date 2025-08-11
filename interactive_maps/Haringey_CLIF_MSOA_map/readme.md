@@ -1,0 +1,2 @@
+In order to run, double click the html file whilst the css and javascript files are in the same folder.
+Source for Children in Low Income Families Data is https://stat-xplore.dwp.gov.uk/ and MSOA under-16 population is https://www.nomisweb.co.uk/
