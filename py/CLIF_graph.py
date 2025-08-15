@@ -1,19 +1,38 @@
+import os
+import requests
 import numpy as np
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter 
 
-# Download the file https://assets.publishing.service.gov.uk/media/67dc2c58c5528de3aa6711f9/children-in-low-income-families-local-area-statistics-2014-to-2024.ods
+
+# 1. Specify the url that downloads the data
+url = 'https://assets.publishing.service.gov.uk/media/67dc2c58c5528de3aa6711f9/children-in-low-income-families-local-area-statistics-2014-to-2024.ods'
 # For definitions, see 'Guidance' page of the spreadsheet
 
+# Ensure the 'data' folder exists
+os.makedirs('../data', exist_ok=True)
+
+# 2. Specify folder name as the final part of the url after it's been split on '/' and specify relative path
+file = url.split('/')[-1]
+path = os.path.join('../data', file)
+
+# 3. If the path doesn't exist, download the data. If it does exist, skip this step.
+if not os.path.exists(path):
+    req = requests.get(url)
+    with open(path, 'wb') as output_file:
+        output_file.write(req.content)
+else:
+    print('Data already downloaded. Loading')
+
 # Convert excel file for local authority data into pandas dataframe.
-la_df = pd.read_excel('Enter the path to the file/children-in-low-income-families-local-area-statistics-2014-to-2024.ods', 
+la_df = pd.read_excel(path, 
                    sheet_name='3_Relative_Local_Authority', skiprows=8)
 # For absolute poverty measures, substitute '4_Absolute_Local_Authority' as the sheet_name
 
 # Convert excel file for ward data into pandas dataframe.
-ward_df = pd.read_excel('Enter the path to the file/children-in-low-income-families-local-area-statistics-2014-to-2024.ods', 
+ward_df = pd.read_excel(path, 
                    sheet_name='7_Relative_Ward', skiprows=9)
 # For absolute poverty measures, substitute '8_Absolute_Ward' as the sheet_name
 
@@ -84,6 +103,6 @@ plt.title("Percentage of Children in Low Income Families")
 
 
 # Saves the graph into the filename and path given. Saves into current directory if no path is given.
-plt.savefig('UK_Haringey_NP_CLIF.png', dpi=800, bbox_inches='tight')
+plt.savefig('../outputs/UK_Haringey_NP_CLIF.png', dpi=800, bbox_inches='tight')
 
 plt.close()
