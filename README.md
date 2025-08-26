@@ -1,4 +1,4 @@
-# jrf-child-poverty
+# Poverty Affecting Children
 
 A repo for data collection and visualisation for the JRF Child Poverty project.
 
