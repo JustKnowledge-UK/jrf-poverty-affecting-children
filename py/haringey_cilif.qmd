@@ -31,11 +31,21 @@ import tqdm
 import io
 from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
 from mpl_toolkits.axes_grid1 import make_axes_locatable
+import matplotlib.colors as mcolors
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
 
 db_params = dict(config['postgresql'])
+
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+with open(os.path.join('..', 'ice_swatch.txt'), 'r') as file:
+    ice_swatch = [line.strip() for line in file]    
+
+# Make a colormap
+ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
 ```
 
 
@@ -236,9 +246,16 @@ ally_pally = ally_pally.to_crs(cilif_gdf.crs)
 fig, ax = plt.subplots(figsize=[8, 8])
 
 # Plot the main layers
-cilif_gdf.plot(ax=ax, column='percentage', legend=False, alpha=0.5, edgecolor='black',linewidth=.5)
+cilif_gdf.plot(
+    ax=ax, 
+    column='percentage', 
+    legend=False, 
+    alpha=0.5, 
+    cmap=ice_cmap,
+    edgecolor='black',
+    linewidth=.5)
 ecm_clipped.plot(ax=ax, color='red')
-cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.OpenStreetMap.Mapnik)
+cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.CartoDB.Positron)
 ax.set_axis_off()
 
 # Create a separate legend axis
@@ -248,7 +265,7 @@ cax = divider.append_axes("right", size="5%", pad=0.1)
 
 # Create a dummy mappable for the colorbar
 norm = mpl.colors.Normalize(vmin=cilif_gdf['percentage'].min(), vmax=cilif_gdf['percentage'].max())
-cmap = plt.cm.viridis
+cmap = ice_cmap
 sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
 sm._A = []
 
@@ -259,35 +276,40 @@ cbar.set_label("Percentage of children in low income families")
 ax.text(
     np['centroid'].x,
     np['centroid'].y,
-    s='Northumberland Park',
+    s='Northumberland\nPark',
     ha='center',
-    fontsize=8
+    # fontweight='bold',
+    fontsize=10
 );
 
-ax.text(
-    mh['centroid'].x,
-    mh['centroid'].y,
-    s='Muswell Hill',
-    ha='center',
-    fontsize=8,
-    color='white'
-);
 
-ally_pally.plot(ax=ax, marker='o',color='red', markersize=5)
+
+ally_pally.plot(ax=ax, marker='o',color='red', markersize=12, edgecolor='black',linewidth=0.5 )
 
 x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
-nudge_x = x_range * .01
+nudge_x = x_range * .02
 y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
-nudge_y = y_range * .01
+nudge_y = y_range * .02
 
 ax.text(
     ally_pally.geometry.x - nudge_x,
     ally_pally.geometry.y + nudge_y,
     s='Alexandra\nPalace',
     ha='left',
-    fontsize=8,
-    color='white'
+    fontsize=10,
+    # fontweight='bold',
+    color='black'
 
+);
+
+ax.text(
+    mh['centroid'].x,
+    mh['centroid'].y - nudge_y,
+    s='Muswell Hill',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10,
+    color='black'
 );
 
 ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.999, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=8);
