@@ -273,15 +273,6 @@ sm._A = []
 cbar = fig.colorbar(sm, cax=cax)
 cbar.set_label("Percentage of children in low income families")
 
-ax.text(
-    np['centroid'].x,
-    np['centroid'].y,
-    s='Northumberland\nPark',
-    ha='center',
-    # fontweight='bold',
-    fontsize=10
-);
-
 
 
 ally_pally.plot(ax=ax, marker='o',color='red', markersize=12, edgecolor='black',linewidth=0.5 )
@@ -311,6 +302,17 @@ ax.text(
     fontsize=10,
     color='black'
 );
+
+ax.text(
+    np['centroid'].x,
+    np['centroid'].y - nudge_y,
+    s='Northumberland\nPark',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10
+);
+
+
 
 ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.999, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=8);
 
