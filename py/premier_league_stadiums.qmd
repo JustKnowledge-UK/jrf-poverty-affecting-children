@@ -15,6 +15,7 @@ import re
 import geopandas as gpd
 from shapely.geometry import Point
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import contextily as cx
 from adjustText import adjust_text
 import configparser
@@ -31,104 +32,141 @@ config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config_jk.ini'))
 
 db_params = dict(config['postgresql'])
+
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+mpl.rcParams['font.family'] = 'Open Sans'
+
+# mpl.rcParams['font.size'] = 16
 ```
 
 Read the table on wikipedia: [https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums](https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums)
 
 ```{python}
-# Define the URL
-url = "https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums"
+file = os.path.join('..','data','stadia_gdf.pkl')
+if os.path.isfile(file)==False:
+    # Define the URL
+    url = "https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums"
 
-# Send GET request to the webpage
-response = requests.get(url)
-response.raise_for_status()  # Raise an exception for bad status codes
+    # Send GET request to the webpage
+    response = requests.get(url)
+    response.raise_for_status()  # Raise an exception for bad status codes
 
-# Parse the HTML content
-soup = BeautifulSoup(response.content, 'html.parser')
+    # Parse the HTML content
+    soup = BeautifulSoup(response.content, 'html.parser')
 
-# Find the first wikitable (which contains the stadiums data)
-table = soup.find('table', {'class': 'wikitable'})
+    # Find the first wikitable (which contains the stadiums data)
+    table = soup.find('table', {'class': 'wikitable'})
 
-# Extract table data using pandas
-stadiums_df = pd.read_html(str(table))[0]
+    # Extract table data using pandas
+    stadiums_df = pd.read_html(str(table))[0]
 
-# Clean the data
-def clean_text(text):
-    """Remove Wikipedia reference numbers and extra whitespace"""
-    if pd.isna(text):
+    # Clean the data
+    def clean_text(text):
+        """Remove Wikipedia reference numbers and extra whitespace"""
+        if pd.isna(text):
+            return text
+        # Remove reference numbers like [1], [2], etc.
+        text = re.sub(r'\[.*?\]', '', str(text))
+        # Remove extra whitespace
+        text = re.sub(r'\s+', ' ', text).strip()
         return text
-    # Remove reference numbers like [1], [2], etc.
-    text = re.sub(r'\[.*?\]', '', str(text))
-    # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text).strip()
-    return text
 
-# Apply cleaning to all columns
-for col in stadiums_df.columns:
-    stadiums_df[col] = stadiums_df[col].apply(clean_text)
+    # Apply cleaning to all columns
+    for col in stadiums_df.columns:
+        stadiums_df[col] = stadiums_df[col].apply(clean_text)
 
-# Remove any completely empty rows
-stadiums_df = stadiums_df.dropna(how='all')
+    # Remove any completely empty rows
+    stadiums_df = stadiums_df.dropna(how='all')
 
-# Display basic info about the scraped data
-print(f"Successfully scraped {len(stadiums_df)} stadiums")
-print(f"Columns: {', '.join(stadiums_df.columns)}")
-print("\nFirst few rows:")
-print(stadiums_df.head())
+    # Display basic info about the scraped data
+    print(f"Successfully scraped {len(stadiums_df)} stadiums")
+    print(f"Columns: {', '.join(stadiums_df.columns)}")
+    print("\nFirst few rows:")
+    print(stadiums_df.head())
 
-# Display data types and info
-print("\nDataFrame info:")
-print(stadiums_df.info())
+    # Display data types and info
+    print("\nDataFrame info:")
+    print(stadiums_df.info())
 
-# Optional: Save to CSV
-stadiums_df.to_csv('premier_league_stadiums.csv', index=False)
-print("\nData saved to 'premier_league_stadiums.csv'")
+    # Optional: Save to CSV
+    stadiums_df.to_csv('premier_league_stadiums.csv', index=False)
+    print("\nData saved to 'premier_league_stadiums.csv'")
 
-# Parse the coordinates into usable WGS64 geometries
-def parse_coordinates(coord_str):
-    """
-    Convert coordinates to decimal degrees (WGS84)
-    Handles format: 53°25′51″N 002°57′39″W﻿ / ﻿53.43083°N 2.96083°W
-    """
-    if pd.isna(coord_str) or coord_str == '':
-        return None, None
-    
-    try:
-        # Debug: Show what we're trying to parse
-        print(f"DEBUG: Parsing coordinate string: '{coord_str}'")
-        print(f"DEBUG: Length: {len(str(coord_str))}")
-        print(f"DEBUG: Repr: {repr(str(coord_str))}")
+    # Parse the coordinates into usable WGS64 geometries
+    def parse_coordinates(coord_str):
+        """
+        Convert coordinates to decimal degrees (WGS84)
+        Handles format: 53°25′51″N 002°57′39″W﻿ / ﻿53.43083°N 2.96083°W
+        """
+        if pd.isna(coord_str) or coord_str == '':
+            return None, None
         
-        # Clean the string - remove extra whitespace and invisible characters
-        coord_str = re.sub(r'\s+', ' ', str(coord_str).strip())
-        coord_str = coord_str.replace('\ufeff', '')  # Remove BOM character if present
-        coord_str = coord_str.replace('\u200f', '')  # Remove right-to-left mark
-        coord_str = coord_str.replace('\u200e', '')  # Remove left-to-right mark
-        
-        print(f"DEBUG: After cleaning: '{coord_str}'")
-        
-        # Check if there's a "/" separator (indicating both DMS and decimal formats)
-        if '/' in coord_str:
-            print("DEBUG: Found '/' separator, trying decimal part")
-            # Split and use the decimal part (after the "/")
-            decimal_part = coord_str.split('/')[-1].strip()
-            print(f"DEBUG: Decimal part: '{decimal_part}'")
+        try:
+            # Debug: Show what we're trying to parse
+            print(f"DEBUG: Parsing coordinate string: '{coord_str}'")
+            print(f"DEBUG: Length: {len(str(coord_str))}")
+            print(f"DEBUG: Repr: {repr(str(coord_str))}")
             
-            # More flexible pattern for decimal coordinates
-            # Matches: 53.43083°N 2.96083°W or 53.43083°N, 2.96083°W
-            decimal_patterns = [
-                r'(\d+\.?\d*)°([NS])\s+(\d+\.?\d*)°([EW])',
-                r'(\d+\.?\d*)°([NS])[,\s]+(\d+\.?\d*)°([EW])',
-                r'(\d+\.?\d*)\s*°\s*([NS])\s+(\d+\.?\d*)\s*°\s*([EW])'
+            # Clean the string - remove extra whitespace and invisible characters
+            coord_str = re.sub(r'\s+', ' ', str(coord_str).strip())
+            coord_str = coord_str.replace('\ufeff', '')  # Remove BOM character if present
+            coord_str = coord_str.replace('\u200f', '')  # Remove right-to-left mark
+            coord_str = coord_str.replace('\u200e', '')  # Remove left-to-right mark
+            
+            print(f"DEBUG: After cleaning: '{coord_str}'")
+            
+            # Check if there's a "/" separator (indicating both DMS and decimal formats)
+            if '/' in coord_str:
+                print("DEBUG: Found '/' separator, trying decimal part")
+                # Split and use the decimal part (after the "/")
+                decimal_part = coord_str.split('/')[-1].strip()
+                print(f"DEBUG: Decimal part: '{decimal_part}'")
+                
+                # More flexible pattern for decimal coordinates
+                # Matches: 53.43083°N 2.96083°W or 53.43083°N, 2.96083°W
+                decimal_patterns = [
+                    r'(\d+\.?\d*)°([NS])\s+(\d+\.?\d*)°([EW])',
+                    r'(\d+\.?\d*)°([NS])[,\s]+(\d+\.?\d*)°([EW])',
+                    r'(\d+\.?\d*)\s*°\s*([NS])\s+(\d+\.?\d*)\s*°\s*([EW])'
+                ]
+                
+                for pattern in decimal_patterns:
+                    decimal_match = re.search(pattern, decimal_part)
+                    if decimal_match:
+                        print(f"DEBUG: Decimal pattern matched: {decimal_match.groups()}")
+                        lat_val, lat_dir, lon_val, lon_dir = decimal_match.groups()
+                        lat_decimal = float(lat_val)
+                        lon_decimal = float(lon_val)
+                        
+                        # Apply direction (negative for South/West)
+                        if lat_dir == 'S':
+                            lat_decimal = -lat_decimal
+                        if lon_dir == 'W':
+                            lon_decimal = -lon_decimal
+                            
+                        print(f"DEBUG: Converted to: {lat_decimal}, {lon_decimal}")
+                        return lat_decimal, lon_decimal
+            
+            # Fallback: Try to parse DMS format from the beginning
+            print("DEBUG: Trying DMS format")
+            # More flexible DMS patterns
+            dms_patterns = [
+                r'(\d+)°(\d+)′(\d+)″([NS])\s+(\d+)°(\d+)′(\d+)″([EW])',
+                r'(\d+)°(\d+)′(\d+)″([NS])[,\s]+(\d+)°(\d+)′(\d+)″([EW])',
+                r'(\d+)\s*°\s*(\d+)\s*′\s*(\d+)\s*″\s*([NS])\s+(\d+)\s*°\s*(\d+)\s*′\s*(\d+)\s*″\s*([EW])'
             ]
             
-            for pattern in decimal_patterns:
-                decimal_match = re.search(pattern, decimal_part)
-                if decimal_match:
-                    print(f"DEBUG: Decimal pattern matched: {decimal_match.groups()}")
-                    lat_val, lat_dir, lon_val, lon_dir = decimal_match.groups()
-                    lat_decimal = float(lat_val)
-                    lon_decimal = float(lon_val)
+            for pattern in dms_patterns:
+                dms_match = re.search(pattern, coord_str)
+                if dms_match:
+                    print(f"DEBUG: DMS pattern matched: {dms_match.groups()}")
+                    lat_deg, lat_min, lat_sec, lat_dir, lon_deg, lon_min, lon_sec, lon_dir = dms_match.groups()
+                    
+                    # Convert to decimal degrees
+                    lat_decimal = int(lat_deg) + int(lat_min)/60 + int(lat_sec)/3600
+                    lon_decimal = int(lon_deg) + int(lon_min)/60 + int(lon_sec)/3600
                     
                     # Apply direction (negative for South/West)
                     if lat_dir == 'S':
@@ -138,173 +176,144 @@ def parse_coordinates(coord_str):
                         
                     print(f"DEBUG: Converted to: {lat_decimal}, {lon_decimal}")
                     return lat_decimal, lon_decimal
-        
-        # Fallback: Try to parse DMS format from the beginning
-        print("DEBUG: Trying DMS format")
-        # More flexible DMS patterns
-        dms_patterns = [
-            r'(\d+)°(\d+)′(\d+)″([NS])\s+(\d+)°(\d+)′(\d+)″([EW])',
-            r'(\d+)°(\d+)′(\d+)″([NS])[,\s]+(\d+)°(\d+)′(\d+)″([EW])',
-            r'(\d+)\s*°\s*(\d+)\s*′\s*(\d+)\s*″\s*([NS])\s+(\d+)\s*°\s*(\d+)\s*′\s*(\d+)\s*″\s*([EW])'
-        ]
-        
-        for pattern in dms_patterns:
-            dms_match = re.search(pattern, coord_str)
-            if dms_match:
-                print(f"DEBUG: DMS pattern matched: {dms_match.groups()}")
-                lat_deg, lat_min, lat_sec, lat_dir, lon_deg, lon_min, lon_sec, lon_dir = dms_match.groups()
-                
-                # Convert to decimal degrees
-                lat_decimal = int(lat_deg) + int(lat_min)/60 + int(lat_sec)/3600
-                lon_decimal = int(lon_deg) + int(lon_min)/60 + int(lon_sec)/3600
-                
-                # Apply direction (negative for South/West)
-                if lat_dir == 'S':
-                    lat_decimal = -lat_decimal
-                if lon_dir == 'W':
-                    lon_decimal = -lon_decimal
-                    
-                print(f"DEBUG: Converted to: {lat_decimal}, {lon_decimal}")
-                return lat_decimal, lon_decimal
-        
-        # Last attempt: simple decimal format
-        print("DEBUG: Trying simple decimal format")
-        simple_patterns = [
-            r'([-+]?\d*\.?\d+)[,\s]+([-+]?\d*\.?\d+)',
-            r'(\d+\.?\d+)\s*,\s*(\d+\.?\d+)',
-            r'(\d+\.?\d+)\s+(\d+\.?\d+)'
-        ]
-        
-        for pattern in simple_patterns:
-            simple_match = re.search(pattern, coord_str)
-            if simple_match:
-                print(f"DEBUG: Simple decimal pattern matched: {simple_match.groups()}")
-                lat, lon = simple_match.groups()
-                result = float(lat), float(lon)
-                print(f"DEBUG: Converted to: {result}")
-                return result
-        
-        print("DEBUG: No patterns matched")
             
-    except Exception as e:
-        print(f"ERROR parsing coordinates '{coord_str}': {e}")
-        
-    return None, None
+            # Last attempt: simple decimal format
+            print("DEBUG: Trying simple decimal format")
+            simple_patterns = [
+                r'([-+]?\d*\.?\d+)[,\s]+([-+]?\d*\.?\d+)',
+                r'(\d+\.?\d+)\s*,\s*(\d+\.?\d+)',
+                r'(\d+\.?\d+)\s+(\d+\.?\d+)'
+            ]
+            
+            for pattern in simple_patterns:
+                simple_match = re.search(pattern, coord_str)
+                if simple_match:
+                    print(f"DEBUG: Simple decimal pattern matched: {simple_match.groups()}")
+                    lat, lon = simple_match.groups()
+                    result = float(lat), float(lon)
+                    print(f"DEBUG: Converted to: {result}")
+                    return result
+            
+            print("DEBUG: No patterns matched")
+                
+        except Exception as e:
+            print(f"ERROR parsing coordinates '{coord_str}': {e}")
+            
+        return None, None
 
-# Debug: Print all column names to see what's available
-print("All columns in the dataframe:")
-for i, col in enumerate(stadiums_df.columns):
-    print(f"{i}: '{col}'")
+    # Debug: Print all column names to see what's available
+    print("All columns in the dataframe:")
+    for i, col in enumerate(stadiums_df.columns):
+        print(f"{i}: '{col}'")
 
-# Find coordinates column and convert to WGS84
-coord_columns = [col for col in stadiums_df.columns if col == 'Coordinates'] 
+    # Find coordinates column and convert to WGS84
+    coord_columns = [col for col in stadiums_df.columns if col == 'Coordinates'] 
 
-coord_col = coord_columns[0]  # Use first coordinates column found
-print(f"Using coordinates column: '{coord_col}'")
+    coord_col = coord_columns[0]  # Use first coordinates column found
+    print(f"Using coordinates column: '{coord_col}'")
 
-# Debug: Show some raw coordinate values
-print(f"\nSample raw coordinate values from '{coord_col}':")
-sample_coords = stadiums_df[coord_col].dropna().head(5)
-for i, coord in enumerate(sample_coords):
-    print(f"{i+1}: '{coord}'")
+    # Debug: Show some raw coordinate values
+    print(f"\nSample raw coordinate values from '{coord_col}':")
+    sample_coords = stadiums_df[coord_col].dropna().head(5)
+    for i, coord in enumerate(sample_coords):
+        print(f"{i+1}: '{coord}'")
 
-# Extract and convert coordinates
-coords = stadiums_df[coord_col].apply(parse_coordinates)
+    # Extract and convert coordinates
+    coords = stadiums_df[coord_col].apply(parse_coordinates)
 
-# Debug: Show parsing results
-print(f"\nParsing results (first 5):")
-for i, coord in enumerate(coords.head(5)):
-    original = stadiums_df[coord_col].iloc[i] if i < len(stadiums_df) else "N/A"
-    print(f"{i+1}: '{original}' -> {coord}")
+    # Debug: Show parsing results
+    print(f"\nParsing results (first 5):")
+    for i, coord in enumerate(coords.head(5)):
+        original = stadiums_df[coord_col].iloc[i] if i < len(stadiums_df) else "N/A"
+        print(f"{i+1}: '{original}' -> {coord}")
 
-# Create separate latitude and longitude columns
-stadiums_df['Latitude_WGS84'] = [coord[0] if coord[0] is not None else None for coord in coords]
-stadiums_df['Longitude_WGS84'] = [coord[1] if coord[1] is not None else None for coord in coords]
+    # Create separate latitude and longitude columns
+    stadiums_df['Latitude_WGS84'] = [coord[0] if coord[0] is not None else None for coord in coords]
+    stadiums_df['Longitude_WGS84'] = [coord[1] if coord[1] is not None else None for coord in coords]
 
-# Display conversion results
-successful_conversions = stadiums_df[['Latitude_WGS84', 'Longitude_WGS84']].dropna()
-print(f"\nSuccessfully converted {len(successful_conversions)} coordinates to WGS84 decimal degrees")
+    # Display conversion results
+    successful_conversions = stadiums_df[['Latitude_WGS84', 'Longitude_WGS84']].dropna()
+    print(f"\nSuccessfully converted {len(successful_conversions)} coordinates to WGS84 decimal degrees")
 
-if len(successful_conversions) > 0:
-    print("\nSample WGS84 coordinates:")
-    print(successful_conversions.head())
-else:
-    print("No coordinates were successfully converted. Check the parsing function.")
-
-# Optional: Display some basic statistics
-print(f"\nSample of stadium names:")
-if 'Stadium' in stadiums_df.columns:
-    print(stadiums_df['Stadium'].head(5).tolist())
-elif len(stadiums_df.columns) > 0:
-    print(stadiums_df.iloc[:5, 0].tolist())  # First column if 'Stadium' not found
-```
-
-
-```{python}
-# Create GeoPandas GeoDataFrame
-successful_coords = stadiums_df.dropna(subset=['Latitude_WGS84', 'Longitude_WGS84'])
-
-if len(successful_coords) > 0:
-    print(f"\nCreating GeoPandas GeoDataFrame with {len(successful_coords)} stadiums...")
-    
-    # Create Point geometries from lat/lon coordinates
-    geometry = [Point(lon, lat) for lon, lat in zip(successful_coords['Longitude_WGS84'], 
-                                                   successful_coords['Latitude_WGS84'])]
-    
-    # Create GeoDataFrame
-    gdf = gpd.GeoDataFrame(successful_coords, geometry=geometry, crs='EPSG:4326')
-    
-    print(f"GeoPandas GeoDataFrame created successfully!")
-    print(f"CRS: {gdf.crs}")
-    print(f"Geometry type: {gdf.geometry.geom_type.iloc[0] if len(gdf) > 0 else 'None'}")
-    
-    # Display basic info about the GeoDataFrame
-    print(f"\nGeoDataFrame info:")
-    print(f"Shape: {gdf.shape}")
-    print(f"Columns: {list(gdf.columns)}")
-    
-    # Show first few rows with geometry
-    print(f"\nFirst few stadiums with coordinates:")
-    if 'Stadium' in gdf.columns:
-        display_cols = ['Stadium', 'Latitude_WGS84', 'Longitude_WGS84', 'geometry']
-        available_cols = [col for col in display_cols if col in gdf.columns]
-        print(gdf[available_cols].head())
+    if len(successful_conversions) > 0:
+        print("\nSample WGS84 coordinates:")
+        print(successful_conversions.head())
     else:
-        print(gdf[['Latitude_WGS84', 'Longitude_WGS84', 'geometry']].head())
-    
-    # Optional: Save as GeoJSON
-    gdf.to_file('premier_league_stadiums.geojson', driver='GeoJSON')
-    print(f"\nGeoDataFrame saved as 'premier_league_stadiums.geojson'")
-    
-    # Optional: Save as Shapefile
-    try:
-        gdf.to_file('premier_league_stadiums.shp')
-        print(f"GeoDataFrame saved as 'premier_league_stadiums.shp'")
-    except Exception as e:
-        print(f"Could not save as Shapefile: {e}")
-    
-    # Calculate bounding box
-    bounds = gdf.total_bounds
-    print(f"\nBounding box (min_lon, min_lat, max_lon, max_lat): {bounds}")
-    
-    # Optional: Basic spatial analysis
-    print(f"\nBasic spatial info:")
-    print(f"Centroid of all stadiums: {gdf.geometry.centroid.iloc[0] if len(gdf) > 0 else 'None'}")
-    
-    # Return the GeoDataFrame for further use
-    stadiums_gdf = gdf
-    
+        print("No coordinates were successfully converted. Check the parsing function.")
+
+    # Optional: Display some basic statistics
+    print(f"\nSample of stadium names:")
+    if 'Stadium' in stadiums_df.columns:
+        print(stadiums_df['Stadium'].head(5).tolist())
+    elif len(stadiums_df.columns) > 0:
+        print(stadiums_df.iloc[:5, 0].tolist())  # First column if 'Stadium' not found
+
+    # Create GeoPandas GeoDataFrame
+    successful_coords = stadiums_df.dropna(subset=['Latitude_WGS84', 'Longitude_WGS84'])
+
+    if len(successful_coords) > 0:
+        print(f"\nCreating GeoPandas GeoDataFrame with {len(successful_coords)} stadiums...")
+        
+        # Create Point geometries from lat/lon coordinates
+        geometry = [Point(lon, lat) for lon, lat in zip(successful_coords['Longitude_WGS84'], 
+                                                    successful_coords['Latitude_WGS84'])]
+        
+        # Create GeoDataFrame
+        gdf = gpd.GeoDataFrame(successful_coords, geometry=geometry, crs='EPSG:4326')
+        
+        print(f"GeoPandas GeoDataFrame created successfully!")
+        print(f"CRS: {gdf.crs}")
+        print(f"Geometry type: {gdf.geometry.geom_type.iloc[0] if len(gdf) > 0 else 'None'}")
+        
+        # Display basic info about the GeoDataFrame
+        print(f"\nGeoDataFrame info:")
+        print(f"Shape: {gdf.shape}")
+        print(f"Columns: {list(gdf.columns)}")
+        
+        # Show first few rows with geometry
+        print(f"\nFirst few stadiums with coordinates:")
+        if 'Stadium' in gdf.columns:
+            display_cols = ['Stadium', 'Latitude_WGS84', 'Longitude_WGS84', 'geometry']
+            available_cols = [col for col in display_cols if col in gdf.columns]
+            print(gdf[available_cols].head())
+        else:
+            print(gdf[['Latitude_WGS84', 'Longitude_WGS84', 'geometry']].head())
+        
+        # Optional: Save as GeoJSON
+        gdf.to_file('premier_league_stadiums.geojson', driver='GeoJSON')
+        print(f"\nGeoDataFrame saved as 'premier_league_stadiums.geojson'")
+        
+        # Optional: Save as Shapefile
+        try:
+            gdf.to_file('premier_league_stadiums.shp')
+            print(f"GeoDataFrame saved as 'premier_league_stadiums.shp'")
+        except Exception as e:
+            print(f"Could not save as Shapefile: {e}")
+        
+        # Calculate bounding box
+        bounds = gdf.total_bounds
+        print(f"\nBounding box (min_lon, min_lat, max_lon, max_lat): {bounds}")
+        
+        # Optional: Basic spatial analysis
+        print(f"\nBasic spatial info:")
+        print(f"Centroid of all stadiums: {gdf.geometry.centroid.iloc[0] if len(gdf) > 0 else 'None'}")
+        
+        # Return the GeoDataFrame for further use
+        stadiums_gdf = gdf
+        
+    else:
+        print("No valid coordinates found - cannot create GeoDataFrame")
+        stadiums_gdf = None
+
+    # Filter to just stadiums that are currently open
+    stadiums_gdf = stadiums_gdf.loc[stadiums_gdf['Closed'].isna()]
+
+    # Save the gdf
+    stadiums_gdf.to_pickle(os.path.join('..','data','stadia_gdf.pkl'))
 else:
-    print("No valid coordinates found - cannot create GeoDataFrame")
-    stadiums_gdf = None
-```
+    with open(file, 'rb') as picklefile:
+        stadiums_gdf = pickle.load(picklefile)
 
-```{python}
-# Filter to just stadiums that are currently open
-stadiums_gdf = stadiums_gdf.loc[stadiums_gdf['Closed'].isna()]
-
-# Save the gdf
-stadiums_gdf.to_pickle(os.path.join('..','data','stadia_gdf.pkl'))
 ```
 
 # Plot
@@ -478,6 +487,7 @@ for i, row in joined.iterrows():
 
 
 ```{python}
+from collections import defaultdict
 # Build a mapping from MSOA to associated stadium(s)
 msoa_to_stadiums = defaultdict(set)
 for res in results:
@@ -883,6 +893,36 @@ plt.show()
 ## Just London stadia 
 
 ```{python}
+colours = {
+    'lad_avg' : {
+        'name' : 'Teal',
+        'colour' : jk_colours[0]
+    },
+    'decile_line' : {
+        'name' : 'Orange',
+        'colour' : jk_colours[2]
+    },
+    'highlight_colour' : {
+        'name' : 'Pink',
+        'colour' : jk_colours[3]
+    }
+}
+
+# colours = {
+#     'decile_line' : {
+#         'name' : 'Teal',
+#         'colour' : jk_colours[0]
+#     },
+#     'lad_avg' : {
+#         'name' : 'Orange',
+#         'colour' : jk_colours[2]
+#     },
+#     'highlight_colour' : {
+#         'name' : 'Pink',
+#         'colour' : jk_colours[3]
+#     }
+# }
+
 # use relative2 because this is all MSOAs
 decile_boundaries = relative2['rank'].quantile([i/10 for i in range(0, 11)]).tolist()
 
@@ -909,14 +949,14 @@ fig, ax = plt.subplots(figsize=[9,9])
 
 ax.scatter(tott_dots['relative_rank'], tott_dots['stadium'], c='black')
 ax.scatter(non_tott_dots['relative_rank'], non_tott_dots['stadium'], c='lightgrey')
-ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c='red')
-ax.scatter(la_avg_ranks['average_rank'], la_avg_ranks['Stadium'], marker="D",c='blue')
+ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c=colours['highlight_colour']['colour'])
+ax.scatter(la_avg_ranks['average_rank'], la_avg_ranks['Stadium'], marker="D",c=colours['lad_avg']['colour'])
 
 # Add vertical lines for decile boundaries
 for i, boundary in enumerate(decile_boundaries):
     ax.axvline(
         x=boundary, 
-        color='red', 
+        color=colours['decile_line']['colour'], 
         # linestyle=(0, (5, 10)), 
         linestyle='dotted', 
         alpha=0.7)
@@ -925,7 +965,7 @@ for i, boundary in enumerate(decile_boundaries):
         ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
 
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
-ax.text(0, ax.get_ylim()[1]*1.1, s='Red dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium\nBlue diamonds indicate the average rank of the borough the Stadium is in', size=8)
+ax.text(0, ax.get_ylim()[1]*1.1, s=f'{colours['highlight_colour']['name']} dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium\n{colours['lad_avg']['name']} diamonds indicate the average rank of the borough the Stadium is in', size=8)
 # for i, row in la_avg_ranks.iterrows():
 #     ax.text(x=row['average_rank'] + nudge_x, 
 #             y=row['Stadium'] + nudge_y, 
@@ -947,12 +987,14 @@ for i, row in la_avg_ranks.iterrows():
 # plt.figtext(0.38, 0.0015, 'Black dots indicate Northumberland Park LSOAs', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 
+ax.get_xaxis().set_major_formatter(mpl.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
+
 plt.xlabel('Rank')
 # Add title with specific positioning
-plt.suptitle(
-    'MSOAs within 1km of London Stadiums', fontsize=14, 
-    x = 0.7, y=.99, 
-    ha='center')  # y controls vertical position
+# plt.suptitle(
+#     'MSOAs within 1km of London Stadiums', fontsize=14, 
+#     x = 0.7, y=.99, 
+#     ha='center')  # y controls vertical position
 
 plt.tight_layout()
 fig.savefig(os.path.join('..','outputs','london_stadiums_1km.png'), dpi=800)
