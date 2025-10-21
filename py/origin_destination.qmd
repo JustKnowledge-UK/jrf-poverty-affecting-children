@@ -36,6 +36,7 @@ import janitor
 import zipfile
 import glob
 from sqlalchemy import create_engine
+import matplotlib as mpl
 
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
@@ -55,6 +56,12 @@ conn_str = (
 
 # Create engine
 engine = create_engine(conn_str)
+
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+mpl.rcParams['font.family'] = 'Open Sans'
+
 ```
 
 ```{python}
@@ -224,7 +231,8 @@ with engine.connect() as con:
             FROM msoa21_boundaries
             WHERE msoa21cd IN ({formatted_list})
             '''
-msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+    msoa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
 msoa_gdf.to_pickle(os.path.join('..','data','msoa_gdf2.pkl'))
 geo_df = msoa_gdf.merge(residence_counts, left_on='msoa21cd', right_on='msoa21cd_residence', how='left')
 # geo_df['count'] = geo_df['count'].fillna(0)
@@ -392,16 +400,16 @@ fig.savefig(os.path.join('..','outputs','session3','ths_area_worker_residence_ha
 emirates_code = 'E02000564'
 formatted_list = ', '.join([f"'{district}'" for district in [emirates_code]])
 
+with engine.connect() as con:
+    query3 = f'''SELECT * FROM census21_od_workplace_msoa
+                WHERE msoa21cd_workplace IN ({formatted_list})
 
-query3 = f'''SELECT * FROM census21_od_workplace_msoa
-            WHERE msoa21cd_workplace IN ({formatted_list})
+                UNION
 
-            UNION
-
-            SELECT * FROM census21_od_workplace_msoa
-            WHERE msoa21cd_residence IN ({formatted_list});
-            '''
-emirates_od_data = pd.read_sql(con=con, sql=query3)
+                SELECT * FROM census21_od_workplace_msoa
+                WHERE msoa21cd_residence IN ({formatted_list});
+                '''
+    emirates_od_data = pd.read_sql(con=con, sql=query3)
 ```
 
 # Exploring all stadia workzones
@@ -494,16 +502,17 @@ sns.barplot(
     data=london, 
     x='percentage', 
     y='stadium', 
-    hue='location', 
+    hue='location',
+    palette=jk_colours,
     hue_order=custom_order,
     ax=ax)
 
-
+ 
 ax.set_xlabel('Percentage')
 ax.set_ylabel('')
 ax.legend().set_title('')
 
-fig.suptitle('Where workers in a stadium MSOA live')
+# fig.suptitle('Where workers in a stadium MSOA live')
 
 plt.tight_layout()
 plt.show()
