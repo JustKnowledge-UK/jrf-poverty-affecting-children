@@ -1,0 +1,228 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import requests
+import json
+import configparser
+import matplotlib as mpl
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'keys.ini'))
+api_key = dict(config['statxplore'])
+
+
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+mpl.rcParams['font.family'] = 'Open Sans'
+mpl.rcParams['font.size'] = 16
+```
+
+```{python}
+# Get the data via the statxplore API
+
+url = "https://stat-xplore.dwp.gov.uk/webapi/rest/v1/table"
+
+# Your JSON body
+payload = {
+    "database": "str:database:HBAI",
+    "measures": ["str:statfn:HBAI:V_F_HBAI:GS_INDPP:SUM"],
+    "recodes": {
+        "str:field:HBAI:V_F_HBAI:TYPE_AGECAT": {
+            "map": [["str:value:HBAI:V_F_HBAI:TYPE_AGECAT:C_HBAI_TYPE:1"]],
+            "total": False
+        },
+        "str:field:HBAI:V_F_HBAI:YEAR": {
+            "map": [
+                ["str:value:HBAI:V_F_HBAI:YEAR:C_HBAI_YEAR:2122"],
+                ["str:value:HBAI:V_F_HBAI:YEAR:C_HBAI_YEAR:2223"],
+                ["str:value:HBAI:V_F_HBAI:YEAR:C_HBAI_YEAR:2324"]
+            ],
+            "total": True
+        },
+        "str:field:HBAI:V_F_HBAI:LOW60AHC": {
+            "map": [
+                ["str:value:HBAI:V_F_HBAI:LOW60AHC:C_HBAI_LOW60AHC:0"],
+                ["str:value:HBAI:V_F_HBAI:LOW60AHC:C_HBAI_LOW60AHC:1"]
+            ],
+            "total": True
+        },
+        "str:field:HBAI:V_F_HBAI:ETHGRPHHPUB": {
+            "map": [
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:1"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:4"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:5"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:99"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETHGRPHHPUB:3"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETHGRPHHPUB:4"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETHGRPHHPUB:5"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETHGRPHHPUB:6"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETHGRPHHPUB:7"]
+            ],
+            "total": True
+        }
+    },
+    "dimensions": [
+        ["str:field:HBAI:V_F_HBAI:ETHGRPHHPUB"],
+        ["str:field:HBAI:V_F_HBAI:YEAR"],
+        ["str:field:HBAI:V_F_HBAI:LOW60AHC"],
+        ["str:field:HBAI:V_F_HBAI:TYPE_AGECAT"]
+    ]
+}
+
+# Replace 'YOUR_API_KEY' with your actual API key
+headers = {
+    "Content-Type": "application/json",
+    "APIKey": api_key['api_key']
+}
+
+# Make the POST request
+response = requests.post(url, headers=headers, json=payload)
+
+# Check the response
+if response.status_code == 200:
+    data = response.json()
+    print(json.dumps(data, indent=2))
+else:
+    print(f"Error {response.status_code}: {response.text}")
+
+
+```
+
+
+```{python}
+import pandas as pd
+import itertools
+import numpy as np
+
+# Get the contents of the data and transform to a dataframe
+
+# Extract relevant parts
+fields = data['fields']
+cubes = data['cubes']['str:statfn:HBAI:V_F_HBAI:GS_INDPP:SUM']['values']
+
+# Get field names and value labels
+field_names = [f['label'] for f in fields]
+field_items = [f['items'] for f in fields]
+
+# Get the labels for each dimension (including totals)
+dimension_labels = []
+for items in field_items:
+    labels = [item['labels'][0] for item in items]  # take the first label
+    dimension_labels.append(labels)
+
+# Create all combinations of the dimension labels
+combinations = list(itertools.product(*dimension_labels))
+
+# Flatten the cubes to match combinations
+def flatten_cube(cube):
+    """Recursively flatten nested cube values."""
+    if isinstance(cube[0], list):
+        flat_list = []
+        for sub in cube:
+            flat_list.extend(flatten_cube(sub))
+        return flat_list
+    else:
+        return [v for v in cube]  
+
+values = flatten_cube(cubes)
+
+# Create DataFrame
+df = pd.DataFrame(combinations, columns=field_names[:len(combinations[0])])
+df['Value'] = values[:len(combinations)]  # ensure lengths match
+
+print(df.head())
+
+cols = ['Ethnicity'] + [col for col in df.columns[1:]]
+cols[2] = '60 per cent median net income'
+df.columns = cols
+
+# NB there is a 0 for not declared, 2023/24, in low income. This is actaully '..' meaning data not available for that year. so need to set this as NA. I discovered this by chance when checking the extraction was correct, but there's probably a systematic way of doing it by referring to the notes field.
+df.loc[df['Value']==0, 'Value'] = np.nan
+df.loc[df['Value'].isna()]
+
+# Write to csv to check the numbers are correct
+df.to_csv(os.path.join('..','data','test.csv'))
+
+
+```
+
+```{python}
+# Get three year average because statxplore says we should when using ethnicity
+# Calculate three-year mean
+df2 = df.groupby(['Ethnicity', '60 per cent median net income']).mean('Value').reset_index()
+
+# Drop 'not in low income'
+df2 = df2.loc[df2['60 per cent median net income']!='Not in low income (at or above threshold)']
+
+# Pivot wider
+df2_wide = df2.pivot(index='Ethnicity',columns='60 per cent median net income', values='Value').reset_index()
+
+df2_wide.columns.name = None  # remove pivot column label
+
+# Calculate % in low income
+df2_wide['In low income - Percentage'] = df2_wide['In low income (below threshold)']/df2_wide['Total'] * 100
+
+# Tidy up some naming ready for plots
+df2_wide.loc[df2_wide['Ethnicity'].str.contains('Not declared'), 'Ethnicity'] = 'Not declared'
+
+df2_wide.loc[df2_wide['Ethnicity'].str.contains('Black'), 'Ethnicity'] = 'Black'
+
+
+df2_wide.loc[df2_wide['Ethnicity']=='Total', 'Ethnicity'] = 'UK Overall'#
+
+asian_names = ['Any other Asian background','Bangladeshi', 'Chinese','Indian','Pakistani']
+asian_names.sort()
+ethnicity_names = asian_names + ['Black', 'Other Ethnic Group', 'Not declared','White','UK Overall']
+
+df2_wide['Ethnicity'] = pd.Categorical(
+    df2_wide['Ethnicity'], 
+    categories=ethnicity_names, 
+    ordered=True
+)
+
+df2_wide = df2_wide.sort_values('Ethnicity', ascending=False)
+```
+
+```{python}
+import matplotlib.pyplot as plt
+fig, ax = plt.subplots(figsize=[10,10])
+
+colours = [jk_colours[2] if x == 'UK Overall' else jk_colours[0] for x in df2_wide['Ethnicity']]
+
+# Do this approach so that I can get the bar parameters to add text to
+bars = df2_wide.plot(
+    ax=ax,
+    kind='barh',
+    x='Ethnicity',
+    y='In low income - Percentage',
+    color=colours,
+    legend=False
+)
+
+# for i, row in df2_wide.iterrows():
+#     perc =  row['In low income - Percentage']
+#     ax.text(perc, i, s=f"{perc:.0f}%")
+
+# Add labels using the bar positions
+for bar in bars.patches:   # bars.patches contains all rectangles
+    width = bar.get_width()           # bar length = percentage
+    y_pos = bar.get_y() + bar.get_height()/2  # vertical center of the bar
+    ax.text(
+        width + 0.5,   # slightly past the end of the bar
+        y_pos,
+        f"{width:.0f}%",
+        va='center'
+    )
+
+ax.set_xlabel('Percentage');
+ax.set_ylabel('');
+# Extend the x-axis by 5% beyond the max value
+max_value = df2_wide['In low income - Percentage'].max()
+ax.set_xlim(0, max_value * 1.1)  # 5% padding on the right
+
+fig.savefig(os.path.join('..','outputs','hbai_ethnicity.png'), dpi=800)
+```
