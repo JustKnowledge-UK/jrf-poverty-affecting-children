@@ -1,0 +1,174 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import pandas as pd
+import configparser
+from sqlalchemy import create_engine
+import geopandas as gpd
+import pickle
+import matplotlib.colors as mcolors
+
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+
+db_params = dict(config['postgresql'])
+
+# Load config
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+# ice swatch
+filepath = os.path.join('..', 'ice_swatch.txt')
+with open(filepath, 'r', encoding='utf-8') as file:
+    ice_swatch = [line.strip() for line in file if line.strip()]
+
+# Make a colormap
+ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
+
+# Diverging
+filepath = os.path.join('..', 'diverging_pg.txt')
+with open(filepath, 'r', encoding='utf-8') as file:
+    diverging_pg = [line.strip() for line in file if line.strip()]
+
+# Make a colormap
+diverging_pg = mcolors.LinearSegmentedColormap.from_list("diverging_pg", diverging_pg)
+
+
+```
+
+
+```{python}
+# Loaod house price data
+data = pd.read_csv(os.path.join('..','data','house_price_deciles.csv'))
+
+# Get geometries
+oas = data['oa21cd'].unique()
+
+formatted_list = ', '.join([f"'{oa}'" for oa in oas.tolist()])
+
+path = os.path.join('..','data')
+filepath = path + 'oa_gdf.pkl'
+if not os.path.exists(filepath):
+    with engine.connect() as con:
+        query = f'''SELECT oa21cd, geometry FROM oa21_boundaries
+                    WHERE oa21cd IN ({formatted_list});
+                    '''
+        oa_gdf = gpd.read_postgis(con=con, sql=query, geom_col='geometry')
+
+    with open(filepath, 'wb') as file:
+        pickle.dump(oa_gdf, file)
+
+else:
+    print('Loading data')
+    with open(filepath, 'rb') as file:
+        oa_gdf = pickle.load(file)
+
+data_gdf = oa_gdf.merge(data, how='right', on='oa21cd')
+```
+
+```{python}
+# Get NP boudnaires to higlhight
+with engine.connect() as con:
+    query = '''
+            SELECT msoa21cd, geometry
+            FROM msoa21_boundaries
+            WHERE msoa21cd = 'E02000398'
+
+    '''
+    np_gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
+```
+
+```{python}
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import contextily as cx
+from mpl_toolkits.axes_grid1.axes_divider import make_axes_locatable
+from matplotlib.colors import TwoSlopeNorm
+
+fig, ax = plt.subplots(figsize=[10, 10])
+
+# Data range
+target_max = data_gdf['change_2023_2000'].max()
+target_min = data_gdf['change_2023_2000'].min()
+target_range = target_max - target_min + 1
+
+# --- 1️⃣ Define a diverging normalization centered on 0 ---
+continuous_norm = TwoSlopeNorm(vmin=target_min, vcenter=0, vmax=target_max)
+
+# --- 2️⃣ Sample discrete colors evenly from the continuous norm ---
+n_bins = target_range
+colors = []
+for val in range(target_min, target_max + 1):
+    # Map each discrete value through the norm, then through the colormap
+    colors.append(diverging_pg(continuous_norm(val)))
+
+# --- 3️⃣ Ensure color for 0 is exactly white ---
+if 0 in range(target_min, target_max + 1):
+    zero_index = 0 - target_min
+    colors[zero_index] = jk_colours[5]  # RGBA white
+
+cmap_discrete = mpl.colors.ListedColormap(colors)
+
+# --- 4️⃣ Build discrete boundaries and norm ---
+bounds = list(range(target_min, target_max + 2))
+norm = mpl.colors.BoundaryNorm(bounds, cmap_discrete.N)
+
+# --- 5️⃣ Plot with discrete diverging colormap ---
+data_gdf.plot(
+    ax=ax,
+    column='change_2023_2000',
+    cmap=cmap_discrete,
+    norm=norm,
+    edgecolor='grey',
+    linewidth=0.1
+)
+
+# add outline of northumberland park
+np_gdf.boundary.plot(ax=ax, colour)
+
+cx.add_basemap(ax=ax, crs=data_gdf.crs, source=cx.providers.CartoDB.Positron)
+
+# --- 6️⃣ Colorbar setup (ticks at bin centers only) ---
+sm = mpl.cm.ScalarMappable(cmap=cmap_discrete, norm=norm)
+sm._A = []
+
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+cbar = fig.colorbar(
+    sm, 
+    cax=cax, 
+    # boundaries=bounds, 
+    ticks=[]
+)
+
+tick_positions = [i + 0.5 for i in range(target_min, target_max + 1)]
+cbar.set_ticks(tick_positions)
+cbar.set_ticklabels(range(target_min, target_max + 1))
+
+cbar.set_label('Decile change', fontsize=12)
+cbar.outline.set_visible(False)
+# cbar.ax.tick_params(size=0)
+cbar.ax.minorticks_off()
+ax.set_axis_off()
+plt.show()
+
+```
