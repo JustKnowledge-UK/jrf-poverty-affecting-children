@@ -1,0 +1,140 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import os
+import requests
+import zipfile
+import pandas as pd
+import glob
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+plt.rcParams['font.family'] = 'Open Sans'   
+plt.rcParams['font.size'] = 16    # size of the title
+```
+
+```{python}
+data_dir = os.path.join('..', 'data')
+
+```
+
+```{python}
+urls = {
+    '2015' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/april2015and2016/livingwagebylaandpc.zip',
+    '2016': 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/april2016and2017/livingwagebylaandpc2016and2017.zip',
+    '2017' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/april2017and2018/20172018livingwagebyworkgeographyv2.zip',
+    '2018': 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/april2018and2019/20182019livingwagebyworkgeography.zip',
+    '2019': 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/april2019and2020/20192020livingwagebyworkgeography.zip',
+    '2020' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2020revised/livingwagebyworkgeography2020revised.zip',
+    '2021' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2021revised/livingwagebyworkgeography2021revised.zip',
+    '2022' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2022revised/livingwagebyworkgeography2022revised.zip',
+    '2023' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2023revised/lwf2023revised.zip',
+    '2024' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2024revised/ashelwf2024revised.zip',
+    '2025' : 'https://www.ons.gov.uk/file?uri=/employmentandlabourmarket/peopleinwork/earningsandworkinghours/datasets/numberandproportionofemployeejobswithhourlypaybelowthelivingwage/2025provisional/ashelwf2025provisional.zip'
+}
+
+
+all_data = pd.DataFrame()
+targets = ['United Kingdom','London','Haringey','Tottenham']
+for year in urls.keys():
+    print(year)
+    url = urls[year]
+    
+    folder = url.split('/')[-1]
+    path = os.path.join(data_dir, folder)
+
+    # 3. If the path doesn't exist, download the data. If it does exist, skip this step.
+    if not os.path.exists(path):
+        req = requests.get(url)
+        with open(path, 'wb') as output_file:
+            output_file.write(req.content)
+    else:
+        print('Data already downloaded. Loading')
+
+    # 4. Unzip the folder
+    ## i. Define outpath as same as in path minus .zip
+    out_path = os.path.splitext(path)[0]  # This removes the .zip extension
+
+    ## ii. Create the extraction directory if it doesn't exist
+    if not os.path.exists(out_path):
+        os.makedirs(out_path)
+
+    ## iii. Unzip to extraction directory
+    with zipfile.ZipFile(path, 'r') as zip_ref:
+        zip_ref.extractall(out_path)
+
+    # for each year get the files - both work geo and work pc
+    if year == '2015':
+        # Different pattern for 2015
+        pattern = f"*{year}.*"
+    else:
+        pattern = f"*{year}.*"
+    
+    matches = glob.glob(os.path.join(out_path, pattern))
+
+    for file in matches:
+        # load the first file - work geo
+        data = pd.read_excel(file,
+                                sheet_name='All', skiprows=4, skipfooter=4)
+
+        # Clean description of any extra characters
+        data['Description'] = data['Description'].str.strip()
+
+        # Subset to any rows that are UK, London, Haringey or Tottenham
+        data = data.loc[data['Description'].isin(targets)]
+
+        # Add year variable
+        data['Year'] = year
+
+        # add to master dataframe
+        all_data = pd.concat([all_data, data], ignore_index=True)
+
+
+# Drop the duplicates
+all_data = all_data.drop_duplicates()
+
+# rename columns and drop unwanted
+col_names = ['area','area_code','jobs_thousand','percent','drop1','drop2','drop3','year']
+all_data.columns = col_names
+all_data = all_data[[col for col in col_names if 'drop' not in col]]
+
+# Reorder columns so year is first
+col_order = ['year'] + [col for col in all_data.columns if col != 'year']
+all_data = all_data[col_order]
+```
+
+
+```{python}
+
+
+plt.figure(figsize=(10,6))
+sns.lineplot(
+    data=all_data, 
+    x='year', 
+    y='percent',
+    hue='area', 
+    marker='o', 
+    palette=jk_colours, 
+    lw=3, 
+    markersize=8,
+    markeredgewidth=0)
+
+plt.ylabel('Percentage')
+plt.xlabel('Financial year ending')
+# Add major gridlines
+plt.grid(axis='y', which='major', linestyle='--', linewidth=0.8, alpha=0.7)  # dashed, semi-transparent
+plt.legend(title='')
+plt.tight_layout()
+
+plt.savefig(os.path.join('..','outputs','jobs_below_living_wage_over_time.png'), dpi=800)
+
+plt.show()
+
+```
