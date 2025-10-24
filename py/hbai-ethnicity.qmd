@@ -3,6 +3,12 @@ title: "Untitled"
 format: html
 ---
 
+This script acquires Households Below Average Income by ethnicity from Stat Xplore API plots it.
+
+We use a three-year average as per the recommendation on statxplore ([https://stat-xplore.dwp.gov.uk/webapi/metadata/HBAI/Ethnic%20Group%20of%20the%20Head%20of%20the%20Household%20(please%20calculate%20three-year%20averages%20-%20click%20on%20i%20for%20the%20correct%20method).html](https://stat-xplore.dwp.gov.uk/webapi/metadata/HBAI/Ethnic%20Group%20of%20the%20Head%20of%20the%20Household%20(please%20calculate%20three-year%20averages%20-%20click%20on%20i%20for%20the%20correct%20method).html)). Values based on FY 2021/22-2023/24. 
+
+
+
 ```{python}
 import requests
 import json
@@ -189,7 +195,7 @@ df2_wide = df2_wide.sort_values('Ethnicity', ascending=False)
 
 ```{python}
 import matplotlib.pyplot as plt
-fig, ax = plt.subplots(figsize=[10,10])
+fig, ax = plt.subplots(figsize=[10,8])
 
 colours = [jk_colours[2] if x == 'UK Overall' else jk_colours[0] for x in df2_wide['Ethnicity']]
 
@@ -223,6 +229,7 @@ ax.set_ylabel('');
 # Extend the x-axis by 5% beyond the max value
 max_value = df2_wide['In low income - Percentage'].max()
 ax.set_xlim(0, max_value * 1.1)  # 5% padding on the right
+plt.tight_layout();
 
 fig.savefig(os.path.join('..','outputs','hbai_ethnicity.png'), dpi=800)
 ```
