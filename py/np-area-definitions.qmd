@@ -1,0 +1,244 @@
+---
+title: "Untitled"
+format: html
+---
+
+```{python}
+import requests
+import geopandas as gpd
+import pandas as pd
+import io
+import configparser
+from sqlalchemy import create_engine
+import psycopg2
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+# Load DB config
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config_jk.ini'))
+db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+plt.rcParams['font.family'] = 'Open Sans'   
+plt.rcParams['font.size'] = 16    # size of the title
+```
+
+```{python}
+def fetch_data(base_url, where_clause, result_offset, max_records):
+    params = {
+        "where": where_clause,       # Retrieve all records
+        "outFields": "*",            # "*" specifies all fields
+        "outSR": "4326",
+        "f": "geojson",
+        "resultOffset": result_offset,   # For pagination
+        "resultRecordCount": max_records
+    }
+
+    # Make request
+    response = requests.get(base_url, params=params)
+    content_bytes = response.content
+
+    # Check for 504 error in body if response seems suspiciously short
+    error_504 = False
+    if len(content_bytes) < 1000:
+        peek_content = response.text
+        if "error" in peek_content.lower() and "504" in peek_content:
+            error_504 = True
+        else:
+            error_504 = False
+
+    # Handle response status and embedded 504
+    if response.status_code == 200 and not error_504:
+        return response
+        # Optionally: return response.text  # if you want to return the content
+    else:
+        raise Exception(f"Error: Status code {response.status_code} (body may contain 504)")
+
+# Example usage:
+# response = fetch_data(base_url, "1=1", 0, 2000)
+# print(response.text)
+```
+
+## LAD
+
+```{python}
+base_url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/LAD_MAY_2025_UK_BFC_V2/FeatureServer/0/query'
+
+target_variable = 'LAD25NM'
+
+areas = ['Haringey']
+
+where_clause = f"{target_variable} IN ('" + "', '".join(areas) + "')"
+
+response = fetch_data(
+    base_url=base_url,
+    where_clause=where_clause, 
+    result_offset=0, 
+    max_records=2000)
+
+
+# Get GeoJSON text content from the response
+geojson_data = response.text
+
+# Read the GeoJSON into a GeoDataFrame
+lad_gdf = gpd.read_file(io.StringIO(geojson_data))
+```
+
+## MSOA
+
+```{python}
+base_url = "https://services1.arcgis.com/ESMARspQHYMw9BZ9/ArcGIS/rest/services/Middle_layer_Super_Output_Areas_December_2021_Boundaries_EW_BFC_V7/FeatureServer/0/query"
+
+# with engine.connect() as con:
+#     query = '''SELECT DISTINCT msoa21cd FROM 
+#     pcode_census21_lookup 
+#     WHERE ladnm = 'Haringey'
+#     '''
+
+#     haringey_msoas = pd.read_sql(sql=query, con=con)
+
+# areas = haringey_msoas.msoa21cd.to_list()
+
+areas = ['E02000398']
+
+target_variable = 'MSOA21CD'
+
+where_clause = f"{target_variable} IN ('" + "', '".join(areas) + "')"
+
+response = fetch_data(
+    base_url=base_url,
+    where_clause=where_clause, 
+    result_offset=0, 
+    max_records=2000)
+
+
+# Get GeoJSON text content from the response
+geojson_data = response.text
+
+# Read the GeoJSON into a GeoDataFrame
+msoa_gdf = gpd.read_file(io.StringIO(geojson_data))
+    
+```
+
+## Ward
+
+```{python}
+base_url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/WD_MAY_2025_UK_BFC_V2/FeatureServer/0/query'
+
+target_variable = 'WD25NM'
+
+areas = ['Northumberland Park']
+
+where_clause = f"{target_variable} IN ('" + "', '".join(areas) + "')"
+
+response = fetch_data(
+    base_url=base_url,
+    where_clause=where_clause, 
+    result_offset=0, 
+    max_records=2000)
+
+
+# Get GeoJSON text content from the response
+geojson_data = response.text
+
+# Read the GeoJSON into a GeoDataFrame
+ward_gdf = gpd.read_file(io.StringIO(geojson_data))
+```
+
+## Parliamentary Constituency
+
+```{python}
+base_url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/Westminster_Parliamentary_Constituencies_July_2024_Boundaries_UK_BFC/FeatureServer/0/query'
+
+target_variable = 'PCON24NM'
+
+areas = ['Tottenham']
+
+where_clause = f"{target_variable} IN ('" + "', '".join(areas) + "')"
+
+response = fetch_data(
+    base_url=base_url,
+    where_clause=where_clause, 
+    result_offset=0, 
+    max_records=2000)
+
+
+# Get GeoJSON text content from the response
+geojson_data = response.text
+
+# Read the GeoJSON into a GeoDataFrame
+pc_gdf = gpd.read_file(io.StringIO(geojson_data))
+```
+
+
+```{python}
+import contextily as cx
+fig, ax = plt.subplots(figsize=(10,10))
+
+lw = 3
+lw_lad = 5
+lw_pc = 2
+lw_ward = 3
+lw_msoa = 2
+# Defining custom dot/dash pattern
+# (Offset, (linewidth, linespace))
+ls_msoa = (0, (1, 1))
+# ls_msoa = 'solid'
+ls_ward = (1, (1, 1.4))
+# ls_pc = (2, (1, 1.4))
+ls_pc = 'solid'
+
+lad_gdf.boundary.plot(
+    ax=ax, 
+    edgecolor=jk_colours[0], 
+    label='LAD', 
+    linestyle='solid',
+    linewidth=lw_lad)
+pc_gdf.boundary.plot(
+    ax=ax, 
+    edgecolor=jk_colours[3], 
+    label='PC',
+    linestyle=ls_pc,
+    linewidth=lw_pc)
+msoa_gdf.boundary.plot(
+    ax=ax, 
+    edgecolor=jk_colours[1], 
+    label='MSOA',
+    linestyle=ls_msoa,
+    linewidth=lw_msoa)
+ward_gdf.boundary.plot(
+    ax=ax, 
+    edgecolor=jk_colours[2], 
+    label='Ward',
+    linestyle=ls_ward,
+    linewidth=lw_ward)
+
+
+ax.set_axis_off();
+
+cx.add_basemap(ax, crs=msoa_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax.legend(loc='lower right');
+
+fig.text(
+    .9, 0.24, # near bottom-right corner of the figure
+    'LAD: Haringey Local Authority District\nMSOA: Northumberland Park MSOA\nWard: Northumberland Park Ward\nPC: Tottenham Parliamentary Constituency',
+    ha='right', va='top',
+    fontsize=10, color='black'
+);
+
+
+fig.savefig(os.path.join('..','outputs','area-definitions.png'), dpi=300, bbox_inches='tight')
+```
