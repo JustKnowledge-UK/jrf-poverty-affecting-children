@@ -38,7 +38,7 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 
 mpl.rcParams['font.family'] = 'Open Sans'
 
-# mpl.rcParams['font.size'] = 16
+mpl.rcParams['font.size'] = 16
 ```
 
 Read the table on wikipedia: [https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums](https://en.wikipedia.org/wiki/List_of_Premier_League_stadiums)
@@ -899,8 +899,8 @@ colours = {
         'colour' : jk_colours[0]
     },
     'decile_line' : {
-        'name' : 'Orange',
-        'colour' : jk_colours[2]
+        'name' : 'Black',
+        'colour' : jk_colours[-1]
     },
     'highlight_colour' : {
         'name' : 'Pink',
@@ -946,11 +946,12 @@ nudge_y = -0.1
 fig, ax = plt.subplots(figsize=[9,9])
 
 # Plot grey points first (bottom layer)
+dot_size = 5
 
-ax.scatter(tott_dots['relative_rank'], tott_dots['stadium'], c='black')
-ax.scatter(non_tott_dots['relative_rank'], non_tott_dots['stadium'], c='lightgrey')
-ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c=colours['highlight_colour']['colour'])
-ax.scatter(la_avg_ranks['average_rank'], la_avg_ranks['Stadium'], marker="D",c=colours['lad_avg']['colour'])
+ax.scatter(tott_dots['relative_rank'], tott_dots['stadium'], c='black', lw=dot_size)
+ax.scatter(non_tott_dots['relative_rank'], non_tott_dots['stadium'], c='lightgrey', lw=dot_size)
+ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c=colours['highlight_colour']['colour'], lw=dot_size)
+ax.scatter(la_avg_ranks['average_rank'], la_avg_ranks['Stadium'], marker="D",c=colours['lad_avg']['colour'], lw=dot_size)
 
 # Add vertical lines for decile boundaries
 for i, boundary in enumerate(decile_boundaries):
@@ -959,13 +960,14 @@ for i, boundary in enumerate(decile_boundaries):
         color=colours['decile_line']['colour'], 
         # linestyle=(0, (5, 10)), 
         linestyle='dotted', 
-        alpha=0.7)
+        alpha=0.3)
     if i < 10:
         x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
         ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
 
+text_pos = 7264
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
-ax.text(0, ax.get_ylim()[1]*1.1, s=f'{colours['highlight_colour']['name']} dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium\n{colours['lad_avg']['name']} diamonds indicate the average rank of the borough the Stadium is in', size=8)
+ax.text(text_pos, ax.get_ylim()[1]*1.2, s=f'{colours['highlight_colour']['name']} dot indicates Northumberland Park\nBlack dots indicate MSOAs within 1km of Tottenham Hotspur Stadium\n{colours['lad_avg']['name']} diamonds indicate the average rank of the borough the Stadium is in', size=10, ha='right')
 # for i, row in la_avg_ranks.iterrows():
 #     ax.text(x=row['average_rank'] + nudge_x, 
 #             y=row['Stadium'] + nudge_y, 
@@ -996,8 +998,8 @@ plt.xlabel('Rank')
 #     x = 0.7, y=.99, 
 #     ha='center')  # y controls vertical position
 
-plt.tight_layout()
-fig.savefig(os.path.join('..','outputs','london_stadiums_1km.png'), dpi=800)
+# plt.tight_layout()
+fig.savefig(os.path.join('..','outputs','london_stadiums_1km.png'), dpi=300, bbox_inches='tight')
 plt.show()
 
 
@@ -1036,7 +1038,7 @@ ax.text(x=ax.get_xlim()[0],y=ax.get_ylim()[0]-150, s='Red dot indicates Tottenha
 cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
 ax.set_axis_off()
 
-fig.savefig(os.path.join('..','outputs','tott_hs_1km_map.png'), dpi=800)
+fig.savefig(os.path.join('..','outputs','tott_hs_1km_map.png'), dpi=300)
 
 ```
 
