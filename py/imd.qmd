@@ -120,18 +120,18 @@ domains_of_interest = [
     'income',
     'employment',
     'education_skills_and_training',
-    # 'health_deprivation_and_disability',
+    'health_deprivation_and_disability',
     'crime',
     'barriers_to_housing_and_services',
-    # 'living_environment',
+    'living_environment',
     'income_deprivation_affecting_children',
-    # 'income_deprivation_affecting_older_people',
-    # 'children_and_young_people_sub-domain',
-    # 'adult_skills_sub-domain',
-    # 'geographical_barriers_sub-domain',
-    # 'wider_barriers_sub-domain',
-    # 'indoors_sub-domain',
-    # 'outdoors_sub-domain',
+    'income_deprivation_affecting_older_people',
+    'children_and_young_people_sub-domain',
+    'adult_skills_sub-domain',
+    'geographical_barriers_sub-domain',
+    'wider_barriers_sub-domain',
+    'indoors_sub-domain',
+    'outdoors_sub-domain',
 ]
 
 # Reorder columns
@@ -139,7 +139,6 @@ rank_cols = [
     col for col in iod_msoa.columns
     if 'rank' in col
     and any(domain in col for domain in domains_of_interest)
-    and 'older' not in col
 ]
 
 
@@ -192,7 +191,7 @@ for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
 # Add in the last edge
 decile_boundaries.append(max(all_ranks))
 
-fig, ax = plt.subplots(figsize=[9,9])
+fig, ax = plt.subplots(figsize=[6,6])
 
 # Plot grey points first (bottom layer)
 ax.scatter(not_np_data['rank'], not_np_data['clean_domain'], c='lightgrey')
@@ -216,11 +215,11 @@ plt.xlabel('Rank')
 
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
 
-ax.text(x=ax.get_xlim()[1], y=ax.get_ylim()[1]*1.1, s='Black dots indicate Northumberland Park\nGrey dots represent other areas in Haringey', wrap=False, horizontalalignment='right', fontsize=10)
+ax.text(x=ax.get_xlim()[1], y=ax.get_ylim()[1]*1.25, s='Black dots indicate Northumberland Park\nGrey dots represent other areas in Haringey', wrap=False, horizontalalignment='right', fontsize=10)
 ax.invert_yaxis()
 plt.tight_layout()
 # Add title with specific positioning
-plt.title('Deprivation in Haringey', fontsize=14, x=0, y=1.05, ha='left')  # y controls vertical position
+# plt.title('Deprivation in Haringey', fontsize=14, x=0, y=1.05, ha='left')  # y controls vertical position
 plt.show()
 
 fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=800)
