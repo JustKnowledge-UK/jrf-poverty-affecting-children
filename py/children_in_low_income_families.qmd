@@ -8,6 +8,13 @@ format:
         embed-resources: true
 ---
 
+<!-- ```{r} -->
+# library(reticulate)
+# use_condaenv("base") # this is actually 'env'. this will get confusing so look to fix. may be because I've set 'env' as default interpreter
+# matplotlib <- import("matplotlib")
+# matplotlib$use("Agg", force = TRUE)
+<!-- ``` -->
+
 
 ```{python}
 import pandas as pd
@@ -186,7 +193,8 @@ for idx, row in haringey_relative_gpd.iterrows():
         )
         
 ax.set_title('Children living in relative poverty in Haringey: 2024')
-ax.set_axis_off()
+ax.set_axis_off();
+plt.show()
 ```
 
 ### Across years
