@@ -5,6 +5,8 @@ date: 2025-07-01
 format: html
 ---
 
+
+
 ```{python}
 # Packages and config
 import pandas as pd
@@ -46,6 +48,10 @@ with open(os.path.join('..', 'ice_swatch.txt'), 'r') as file:
 
 # Make a colormap
 ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
+
+
+plt.rcParams['font.family'] = 'Open Sans'   
+plt.rcParams['font.size'] = 16    # size of the title
 ```
 
 
@@ -239,7 +245,6 @@ mh['centroid'] = mh.geometry.centroid
 # Create Point in WGS84 (lon, lat)
 ally_point = Point(-0.131911, 51.594341)
 ally_pally = gpd.GeoDataFrame(geometry=[ally_point], crs="EPSG:4326")
-
 # Reproject ally_pally to the same CRS as cilif_gdf
 ally_pally = ally_pally.to_crs(cilif_gdf.crs)
 
@@ -250,7 +255,7 @@ cilif_gdf.plot(
     ax=ax, 
     column='percentage', 
     legend=False, 
-    alpha=0.5, 
+    alpha=0.7, 
     cmap=ice_cmap,
     edgecolor='black',
     linewidth=.5)
@@ -271,7 +276,7 @@ sm._A = []
 
 # Draw the colorbar in the new axes (same height)
 cbar = fig.colorbar(sm, cax=cax)
-cbar.set_label("Percentage of children in low income families")
+cbar.set_label("Percentage")
 
 
 
@@ -314,10 +319,39 @@ ax.text(
 
 
 
-ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.999, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=8);
+ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.998, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=10);
 
 plt.tight_layout()
-fig.savefig(os.path.join('..','outputs','cilif_haringey.png'), dpi=600)
+fig.savefig(os.path.join('..','outputs','cilif_haringey.png'), dpi=300, bbox_inches='tight')
+```
+
+```{python}
+# take a quick look at the highest and lowest of the msoas
+cilif_gdf.sort_values(by='percentage')[['msoa21cd','percentage']]
+
+import matplotlib.pyplot as plt
+
+# Sort if desired
+cilif_gdf = cilif_gdf.sort_values(by='percentage')
+
+# Create the plot
+fig, ax = plt.subplots(figsize=(8, 8))
+cilif_gdf.boundary.plot(ax=ax, color='black', linewidth=0.5)
+
+# Plot filled polygons (optional, e.g. by percentage)
+cilif_gdf.plot(column='percentage', cmap=ice_cmap, legend=True, ax=ax)
+
+# Add labels
+for idx, row in cilif_gdf.iterrows():
+    # Get centroid coordinates
+    x, y = row.geometry.centroid.coords[0]
+    # Add text label (use 'msoa21cd' or another column)
+    ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
+
+plt.title("MSOA Areas Labeled by Code")
+plt.axis('off')
+plt.show()
+
 ```
 
 ## Children in Low Income Families - Deciles 
