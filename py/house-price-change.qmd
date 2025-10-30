@@ -11,11 +11,8 @@ from sqlalchemy import create_engine
 import geopandas as gpd
 import pickle
 import matplotlib.colors as mcolors
-
-config = configparser.ConfigParser()
-config.read(os.path.join('..', 'db_config.ini'))
-
-db_params = dict(config['postgresql'])
+import os
+import matplotlib as mpl
 
 # Load config
 config = configparser.ConfigParser()
@@ -41,7 +38,9 @@ with open(filepath, 'r', encoding='utf-8') as file:
     ice_swatch = [line.strip() for line in file if line.strip()]
 
 # Make a colormap
-ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
+ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch)
+
+ice_cmap_rev = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
 
 # Diverging
 filepath = os.path.join('..', 'diverging_pg.txt')
@@ -51,7 +50,8 @@ with open(filepath, 'r', encoding='utf-8') as file:
 # Make a colormap
 diverging_pg = mcolors.LinearSegmentedColormap.from_list("diverging_pg", diverging_pg)
 
-
+mpl.rcParams['font.family'] = 'Open Sans'
+mpl.rcParams['font.size'] = 16
 ```
 
 
@@ -137,12 +137,12 @@ data_gdf.plot(
     column='change_2023_2000',
     cmap=cmap_discrete,
     norm=norm,
-    edgecolor='grey',
+    edgecolor='black',
     linewidth=0.1
 )
 
 # add outline of northumberland park
-np_gdf.boundary.plot(ax=ax, colour)
+np_gdf.boundary.plot(ax=ax, color=jk_colours[0], linewidth=1)
 
 cx.add_basemap(ax=ax, crs=data_gdf.crs, source=cx.providers.CartoDB.Positron)
 
@@ -164,11 +164,93 @@ tick_positions = [i + 0.5 for i in range(target_min, target_max + 1)]
 cbar.set_ticks(tick_positions)
 cbar.set_ticklabels(range(target_min, target_max + 1))
 
-cbar.set_label('Decile change', fontsize=12)
+cbar.set_label('Decile change')
 cbar.outline.set_visible(False)
 # cbar.ax.tick_params(size=0)
 cbar.ax.minorticks_off()
 ax.set_axis_off()
+plt.tight_layout()
 plt.show()
+
+
+fig.savefig(os.path.join('..','outputs','house_price_change.png'), dpi=300, bbox_inches='tight')
+```
+
+# 2023
+
+```{python}
+fig, ax = plt.subplots(figsize=[10, 10])
+
+# Data range
+target_max = data_gdf['year_2023'].max()
+target_min = data_gdf['year_2023'].min()
+target_range = target_max - target_min + 1
+
+# Create discrete colormap
+colors = [ice_cmap(i/target_range) for i in range(target_max)]  # sample 10 discrete colors - using i/9 ensures last colour is used
+cmap_discrete = mpl.colors.ListedColormap(colors)
+
+# Use a simple normalize from 1 to 10
+norm = mpl.colors.Normalize(vmin=target_min, vmax=target_max+1) # could be +1?
+
+# --- 5️⃣ Plot with discrete diverging colormap ---
+data_gdf.plot(
+    ax=ax,
+    column='year_2023',
+    cmap=ice_cmap,
+    norm=norm,
+    edgecolor='black',
+    linewidth=0.1
+)
+
+sm = mpl.cm.ScalarMappable(cmap=cmap_discrete, norm=norm)
+sm._A = []
+
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create colorbar
+cbar = fig.colorbar(sm, cax=cax)
+
+# Set custom ticks at bin centers
+tick_positions = [i + 0.5 for i in range(target_min, target_max+1)]  # 1.5, 2.5, ..., 9.5
+cbar.set_ticks(tick_positions)
+cbar.set_ticklabels(range(target_min, target_max+1))  # label them 1–10
+cbar.set_label('Decile')
+
+# add outline of northumberland park
+np_gdf.boundary.plot(ax=ax, color=jk_colours[0], linewidth=1)
+
+cx.add_basemap(ax=ax, crs=data_gdf.crs, source=cx.providers.CartoDB.Positron)
+
+# cbar.ax.tick_params(size=0)
+cbar.ax.minorticks_off()
+ax.set_axis_off()
+plt.tight_layout()
+plt.show()
+fig.savefig(os.path.join('..','outputs','house_price_2023.png'), dpi=300, bbox_inches='tight')
+```
+
+
+```{python}
+with engine.connect() as con:
+    query = '''SELECT DISTINCT oa21cd, msoa21cd
+    FROM pcode_census21_lookup 
+    WHERE msoa21cd = 'E02000398'
+    '''
+    
+    np_oas = pd.read_sql(sql=query, con=con)
+
+np_oas_list = np_oas['oa21cd'].tolist()
+
+np_subset = data_gdf.loc[data_gdf['oa21cd'].isin(np_oas_list)]
+
+ranks_np_subset = np_subset['year_2023'].unique()
+print(ranks_np_subset)
+
+np_summary = np_subset.groupby('year_2023')['year_2023'].count()
+np_summary = np_summary.to_frame('count')  # optional: turn it back into a DataFrame
+np_summary['percentage'] = np_summary['count'] / np_summary['count'].sum() * 100
+
 
 ```
