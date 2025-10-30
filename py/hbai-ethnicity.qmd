@@ -59,6 +59,7 @@ payload = {
         "str:field:HBAI:V_F_HBAI:ETHGRPHHPUB": {
             "map": [
                 ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:1"],
+                ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:2"],
                 ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:4"],
                 ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:5"],
                 ["str:value:HBAI:V_F_HBAI:ETHGRPHHPUB:C_HBAI_ETH:99"],
@@ -175,22 +176,25 @@ df2_wide['In low income - Percentage'] = df2_wide['In low income (below threshol
 # Tidy up some naming ready for plots
 df2_wide.loc[df2_wide['Ethnicity'].str.contains('Not declared'), 'Ethnicity'] = 'Not declared'
 
-df2_wide.loc[df2_wide['Ethnicity'].str.contains('Black'), 'Ethnicity'] = 'Black'
+# df2_wide.loc[df2_wide['Ethnicity'].str.contains('Black'), 'Ethnicity'] = 'Black'
 
+df2_wide['Ethnicity'] = df2_wide['Ethnicity'].str.replace('/ ', '/')
 
-df2_wide.loc[df2_wide['Ethnicity']=='Total', 'Ethnicity'] = 'UK Overall'#
+df2_wide.loc[df2_wide['Ethnicity']=='Total', 'Ethnicity'] = 'UK Overall' #
 
-asian_names = ['Any other Asian background','Bangladeshi', 'Chinese','Indian','Pakistani']
-asian_names.sort()
-ethnicity_names = asian_names + ['Black', 'Other Ethnic Group', 'Not declared','White','UK Overall']
+# asian_names = ['Any other Asian background','Bangladeshi', 'Chinese','Indian','Pakistani']
+# asian_names.sort()
+# ethnicity_names = asian_names + ['Black', 'Other Ethnic Group', 'Not declared','White','UK Overall']
 
-df2_wide['Ethnicity'] = pd.Categorical(
-    df2_wide['Ethnicity'], 
-    categories=ethnicity_names, 
-    ordered=True
-)
+# df2_wide['Ethnicity'] = pd.Categorical(
+#     df2_wide['Ethnicity'], 
+#     categories=ethnicity_names, 
+#     ordered=True
+# )
 
-df2_wide = df2_wide.sort_values('Ethnicity', ascending=False)
+# df2_wide = df2_wide.sort_values('Ethnicity', ascending=False)
+
+df2_wide = df2_wide.sort_values(by='In low income - Percentage')
 ```
 
 ```{python}
@@ -231,5 +235,5 @@ max_value = df2_wide['In low income - Percentage'].max()
 ax.set_xlim(0, max_value * 1.1)  # 5% padding on the right
 plt.tight_layout();
 
-fig.savefig(os.path.join('..','outputs','hbai_ethnicity.png'), dpi=800)
+fig.savefig(os.path.join('..','outputs','hbai_ethnicity.png'), dpi=300)
 ```
