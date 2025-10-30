@@ -38,10 +38,6 @@ import glob
 from sqlalchemy import create_engine
 import matplotlib as mpl
 
-config = configparser.ConfigParser()
-config.read(os.path.join('..', 'db_config.ini'))
-
-db_params = dict(config['postgresql'])
 
 # Load config
 config = configparser.ConfigParser()
@@ -61,7 +57,7 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
     jk_colours = [line.strip() for line in file]
 
 mpl.rcParams['font.family'] = 'Open Sans'
-
+mpl.rcParams['font.size'] = 16
 ```
 
 ```{python}
@@ -468,7 +464,9 @@ for stadium in stadia['Stadium'].unique():
 
 # Concatenate the list into a single df
 all_results = pd.concat(results).reset_index(drop=True)
+```
 
+```{python}
 # Plot
 import seaborn as sns
 
@@ -494,7 +492,7 @@ plt.show()
 
 custom_order = ['Stadium','Within 1km', 'Beyond 1km']
 
-fig, ax = plt.subplots(figsize=(8, 8))
+fig, ax = plt.subplots(figsize=(8, 10))
 
 london = all_results.loc[all_results['region']=='London']
 
@@ -514,9 +512,9 @@ ax.legend().set_title('')
 
 # fig.suptitle('Where workers in a stadium MSOA live')
 
-plt.tight_layout()
+# plt.tight_layout()
 plt.show()
 
 
-fig.savefig(os.path.join('..','outputs','session3','stadium_employment.png'), dpi=600)
+fig.savefig(os.path.join('..','outputs','session3','stadium_employment.png'), dpi=300, bbox_inches='tight')
 ```
