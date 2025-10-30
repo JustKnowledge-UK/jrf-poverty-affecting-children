@@ -1,0 +1,132 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import os 
+import requests
+import pandas as pd
+import janitor 
+import matplotlib.pyplot as plt
+import matplotlib as mpl    
+
+data_dir = os.path.join('..','data')
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+plt.rcParams['font.family'] = 'Open Sans'   
+plt.rcParams['font.size'] = 16    # size of the title
+```
+
+
+```{python}
+# Endpoint
+base = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2041_1.csv?"
+date = "date=latest"
+# Type of measure (value/percent)
+measures = "measures=20100"
+# Ethnicity variable - this asks for all disaggregated and aggregated
+ethn = "c2021_eth_20=0,1001,12,13,10,11,14,1002,16,15,17,1003,8,7,6,9,1004,1...5,1005,18,19"
+
+# Get areas as defined in data
+geography = 'E02000398'
+
+# Build the query
+query = base + date + "&" + geography + "&" + ethn + "&" + measures
+
+if not os.path.isfile(filepath):
+    response = requests.get(url)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else: 
+    print('Loading data')
+
+data = pd.read_csv(filepath)
+
+data = janitor.clean_names(data)
+
+cols = ['c2021_eth_20_code','c2021_eth_20_name', 'obs_value']
+
+data = data[cols]
+
+# Separate ethnicity variable into agg and disagg
+data[['ethnicity_aggregated', 'ethnicity_disaggregated']] = (
+    data['c2021_eth_20_name'].str.split(':', expand=True)
+)
+
+# Drop the agg categories 
+data = data.loc[data['c2021_eth_20_code'].str.contains('_')]
+
+# Calculate percentage
+data['percent'] = data['obs_value'].div(data['obs_value'].sum()) * 100
+
+data = data.sort_values(by='percent')
+```
+
+
+```{python}
+fig, ax = plt.subplots(figsize=(10,10))
+
+# Example mapping dictionary
+ethns = data['ethnicity_aggregated'].unique()
+
+colour_map = {
+    ethns[0]: jk_colours[0],
+    ethns[1]: jk_colours[1],
+    ethns[2]: jk_colours[2],
+    ethns[3]: jk_colours[3],
+    ethns[4]: jk_colours[4]
+}
+
+# Apply the mapping, with a default colour fallback
+agg_colours = data['ethnicity_aggregated'].map(colour_map).fillna(jk_colours[5]).tolist()
+
+
+bars = data.plot(
+    ax=ax,
+    kind='barh',
+    x='ethnicity_disaggregated',
+    y='percent',
+    color=agg_colours,
+    legend=False
+)
+ax.set_xlabel('Percentage');
+ax.set_ylabel('');
+
+# Add labels using the bar positions
+for bar in bars.patches:   # bars.patches contains all rectangles
+    width = bar.get_width()           # bar length = percentage
+    y_pos = bar.get_y() + bar.get_height()/2  # vertical center of the bar
+    ax.text(
+        width + 0.1,   # slightly past the end of the bar
+        y_pos,
+        f"{width:.1f}%",
+        va='center'
+    )
+
+import matplotlib.patches as mpatches
+
+# Create custom legend handles from your colour map
+legend_handles = [
+    mpatches.Patch(color=col, label=eth)
+    for eth, col in colour_map.items()
+]
+
+# Add the legend inside bottom right of the plot
+ax.legend(
+    handles=legend_handles,
+    title='Ethnicity (Aggregated)',
+    loc='lower right',          # place inside bottom right
+    bbox_to_anchor=(1, 0),      # fine-tune placement
+    frameon=True,              # optional: cleaner look
+)
+max_value = data['percent'].max()
+ax.set_xlim(0, max_value * 1.2)  # % padding on the right
+# plt.tight_layout();
+
+fig.savefig(os.path.join('..','outputs','np-ethnicity.png'), dpi=300, bbox_inches='tight')
+```
