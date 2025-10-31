@@ -219,7 +219,7 @@ cbar.set_ticklabels(range(target_min, target_max+1))  # label them 1–10
 cbar.set_label('Decile')
 
 # add outline of northumberland park
-np_gdf.boundary.plot(ax=ax, color=jk_colours[0], linewidth=1)
+np_gdf.boundary.plot(ax=ax, color=jk_colours[5], linewidth=1)
 
 cx.add_basemap(ax=ax, crs=data_gdf.crs, source=cx.providers.CartoDB.Positron)
 
