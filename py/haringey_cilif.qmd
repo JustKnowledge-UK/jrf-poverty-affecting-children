@@ -350,7 +350,94 @@ for idx, row in cilif_gdf.iterrows():
 
 plt.title("MSOA Areas Labeled by Code")
 plt.axis('off')
+plt.tight_layout()
 plt.show()
+
+```
+
+```{python}
+# split the msoas based on the ecm
+
+centroids = cilif_gdf.copy()
+centroids["geometry"] = cilif_gdf.geometry.centroid
+
+intersection = cilif_gdf.sjoin(ecm_clipped)
+
+# fig, ax = plt.subplots()
+# intersection.plot(ax=ax)
+# for idx, row in intersection.iterrows():
+#     x, y = row.geometry.centroid.coords[0]
+#     ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
+
+missing = cilif_gdf.copy()
+missing = missing.loc[missing['msoa21cd'].isin(['E02000412', 'E02000432'])]
+intersection = gpd.GeoDataFrame(pd.concat([intersection, missing], ignore_index=True))
+intersection[['min_easting', 'min_northing', 'max_easting', 'max_northing']] = intersection.geometry.apply(lambda x: pd.Series(x.bounds))
+
+intersection_msoas = intersection['msoa21cd'].unique().tolist()
+
+west_msoas = [
+    'E02000405',
+    'E02000416',
+    'E02000424',
+     'E02000432'
+]
+
+east_msoas = [msoa for msoa in intersection_msoas if msoa not in west_msoas]
+
+max_easting = intersection.loc[intersection['msoa21cd'].isin(west_msoas)]['min_easting'].max()
+max_easting2 = intersection.loc[intersection['msoa21cd'].isin(west_msoas)]['max_easting'].max()
+
+bounds = cilif_gdf.copy()
+
+bounds[['min_easting', 'min_northing', 'max_easting', 'max_northing']] = cilif_gdf.geometry.apply(lambda x: pd.Series(x.bounds))
+
+west_gdf = bounds.copy()
+
+# I'm trying to get to a more sophisticated way of doing this without manual intervention. this was the best I could do with the time available.
+# west_gdf = west_gdf.loc[west_gdf['min_easting'] <= max_easting]
+west_gdf = west_gdf.loc[(west_gdf['min_easting'] <= max_easting) & (west_gdf['max_easting'] <= max_easting2)]
+
+
+fig, ax = plt.subplots()
+west_gdf.plot(ax=ax)
+for idx, row in west_gdf.iterrows():
+    x, y = row.geometry.centroid.coords[0]
+    ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
+
+west_gdf = west_gdf.loc[~west_gdf['msoa21cd'].isin(east_msoas + ['E02000397', 'E02000403'])]
+
+fig, ax = plt.subplots()
+west_gdf.plot(ax=ax)
+for idx, row in west_gdf.iterrows():
+    x, y = row.geometry.centroid.coords[0]
+    ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
+
+all_west_msoas = west_gdf['msoa21cd'].unique().tolist()
+
+east_gdf = bounds.loc[~bounds['msoa21cd'].isin(all_west_msoas)]
+
+fig, ax = plt.subplots()
+east_gdf.plot(ax=ax)
+for idx, row in east_gdf.iterrows():
+    x, y = row.geometry.centroid.coords[0]
+    ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
+
+```
+
+```{python}
+# now we can quantify the cilif for east and west
+average_cilif_west = west_gdf['percentage'].mean()
+average_cilif_east = east_gdf['percentage'].mean()
+
+print(round(average_cilif_west,0))
+print(round(average_cilif_east,0))
+
+# check i've got all the msoas
+all_east_msoas = east_gdf['msoa21cd'].unique().tolist()
+
+# should = 36
+len(all_east_msoas + all_west_msoas)
 
 ```
 
