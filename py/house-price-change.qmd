@@ -187,7 +187,7 @@ target_min = data_gdf['year_2023'].min()
 target_range = target_max - target_min + 1
 
 # Create discrete colormap
-colors = [ice_cmap(i/target_range) for i in range(target_max)]  # sample 10 discrete colors - using i/9 ensures last colour is used
+colors = [ice_cmap_rev(i/target_range) for i in range(target_max)]  # sample 10 discrete colors - using i/9 ensures last colour is used
 cmap_discrete = mpl.colors.ListedColormap(colors)
 
 # Use a simple normalize from 1 to 10
@@ -197,7 +197,7 @@ norm = mpl.colors.Normalize(vmin=target_min, vmax=target_max+1) # could be +1?
 data_gdf.plot(
     ax=ax,
     column='year_2023',
-    cmap=ice_cmap,
+    cmap=ice_cmap_rev,
     norm=norm,
     edgecolor='black',
     linewidth=0.1

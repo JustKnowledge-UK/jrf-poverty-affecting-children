@@ -47,8 +47,8 @@ with open(os.path.join('..', 'ice_swatch.txt'), 'r') as file:
     ice_swatch = [line.strip() for line in file]    
 
 # Make a colormap
-ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
-
+ice_cmap = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch)
+ice_cmap_rev = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reversed()
 
 plt.rcParams['font.family'] = 'Open Sans'   
 plt.rcParams['font.size'] = 16    # size of the title
