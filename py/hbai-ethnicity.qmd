@@ -38,7 +38,10 @@ payload = {
     "measures": ["str:statfn:HBAI:V_F_HBAI:GS_INDPP:SUM"],
     "recodes": {
         "str:field:HBAI:V_F_HBAI:TYPE_AGECAT": {
-            "map": [["str:value:HBAI:V_F_HBAI:TYPE_AGECAT:C_HBAI_TYPE:1"]],
+            "map": [
+                # ["str:value:HBAI:V_F_HBAI:TYPE_AGECAT:C_HBAI_TYPE:1"] # This was all children (incl. under 19s)
+                ["str:value:HBAI:V_F_HBAI:TYPE_AGECAT:C_HBAI_TYPE_AGECAT:1"] # This is under 16s only
+                ],
             "total": False
         },
         "str:field:HBAI:V_F_HBAI:YEAR": {
@@ -165,7 +168,7 @@ df2 = df.groupby(['Ethnicity', '60 per cent median net income']).mean('Value').r
 # Drop 'not in low income'
 df2 = df2.loc[df2['60 per cent median net income']!='Not in low income (at or above threshold)']
 
-# Pivot wider
+# Pivot widerdf
 df2_wide = df2.pivot(index='Ethnicity',columns='60 per cent median net income', values='Value').reset_index()
 
 df2_wide.columns.name = None  # remove pivot column label
