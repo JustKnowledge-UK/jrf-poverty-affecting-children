@@ -33,13 +33,14 @@ measures = "measures=20100"
 ethn = "c2021_eth_20=0,1001,12,13,10,11,14,1002,16,15,17,1003,8,7,6,9,1004,1...5,1005,18,19"
 
 # Get areas as defined in data
-geography = 'E02000398'
+geography = 'geography=E02000398'
 
 # Build the query
 query = base + date + "&" + geography + "&" + ethn + "&" + measures
 
+filepath = os.path.join(data_dir, 'np_ethnicity.csv')
 if not os.path.isfile(filepath):
-    response = requests.get(url)
+    response = requests.get(query)
     with open(filepath, 'wb') as file:
         file.write(response.content)
 else: 
@@ -57,6 +58,11 @@ data = data[cols]
 data[['ethnicity_aggregated', 'ethnicity_disaggregated']] = (
     data['c2021_eth_20_name'].str.split(':', expand=True)
 )
+
+# Save the agg cats
+data_agg = data.loc[~data['c2021_eth_20_code'].str.contains('_')] 
+data_agg = data_agg.loc[data_agg['ethnicity_aggregated']!='Total']
+data_agg['percent'] = data_agg['obs_value'].div(data_agg['obs_value'].sum()) * 100
 
 # Drop the agg categories 
 data = data.loc[data['c2021_eth_20_code'].str.contains('_')]
@@ -129,4 +135,39 @@ ax.set_xlim(0, max_value * 1.2)  # % padding on the right
 # plt.tight_layout();
 
 fig.savefig(os.path.join('..','outputs','np-ethnicity.png'), dpi=300, bbox_inches='tight')
+```
+
+# Age of arrival
+
+```{python}
+base = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2038_1.data.csv?'
+
+date = 'date=latest'
+geography = 'geography=E02000398'
+age = 'c2021_agearruk_18=0,1,1001,2...17'
+measures = 'measures=20100'
+
+
+# Build the query
+query = base + date + "&" + geography + "&" + age + "&" + measures
+
+filepath = os.path.join(data_dir, 'np_age-of-arrival.csv')
+if not os.path.isfile(filepath):
+    response = requests.get(query)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else: 
+    print('Loading data')
+
+aof_data = pd.read_csv(filepath)
+
+aof_data = janitor.clean_names(aof_data) 
+
+
+cols = ['c2021_agearruk_18_code','c2021_agearruk_18_name', 'obs_value']
+
+aof_data = aof_data[cols]
+aof_data = aof_data.loc[aof_data['c2021_agearruk_18_code'].isin(['_1','1001'])]
+aof_data['percentage'] = aof_data['obs_value'].div(aof_data['obs_value'].sum()) * 100
+
 ```
