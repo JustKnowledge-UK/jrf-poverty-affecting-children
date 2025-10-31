@@ -953,6 +953,11 @@ ax.scatter(non_tott_dots['relative_rank'], non_tott_dots['stadium'], c='lightgre
 ax.scatter(np_dots['relative_rank'], np_dots['stadium'], c=colours['highlight_colour']['colour'], lw=dot_size)
 ax.scatter(la_avg_ranks['average_rank'], la_avg_ranks['Stadium'], marker="D",c=colours['lad_avg']['colour'], lw=dot_size)
 
+# ymin, ymax = ax.get_ylim()
+# ax.set_ylim(ymin - (ymax - ymin) * 0.02, ymax)
+
+ax.margins(y=0.1)  # Adds 10% margin above and below
+
 # Add vertical lines for decile boundaries
 for i, boundary in enumerate(decile_boundaries):
     ax.axvline(
@@ -964,6 +969,12 @@ for i, boundary in enumerate(decile_boundaries):
     if i < 10:
         x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
         ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
+
+# # Get current y-limits
+# ymin, ymax = ax.get_ylim()
+
+# # Expand the top by 10% (adjust as needed)
+# ax.set_ylim(ymin, ymax + (ymax - ymin) * 0.05)
 
 text_pos = 7264
 ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
@@ -990,6 +1001,9 @@ for i, row in la_avg_ranks.iterrows():
 ax.invert_yaxis()
 
 ax.get_xaxis().set_major_formatter(mpl.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
+
+
+
 
 plt.xlabel('Rank')
 # Add title with specific positioning
