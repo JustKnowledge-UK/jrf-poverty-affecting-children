@@ -1,0 +1,600 @@
+---
+title: "Untitled"
+format: html
+---
+
+
+```{python}
+import psycopg2
+import configparser
+import os
+import requests
+import pandas as pd
+from sqlalchemy import create_engine
+import matplotlib.pyplot as plt
+from sqlalchemy import create_engine
+import janitor
+import matplotlib as mpl
+import numpy as np
+
+# Load DB config
+config = configparser.ConfigParser()
+config.read(os.path.join('..', 'db_config.ini'))
+db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+mpl.rcParams['font.family'] = 'Open Sans'
+mpl.rcParams['font.size'] = 16
+
+```
+
+
+```{python}
+with engine.connect() as con:
+    query = '''
+        WITH lookup as (
+        SELECT DISTINCT lsoa11cd, msoa11cd
+        FROM pcode_census11_lookup 
+        WHERE lad21nm = 'Haringey')
+    SELECT goo.*, lookup.msoa11cd FROM 
+    gva_by_lsoa goo
+    RIGHT JOIN lookup 
+    ON goo.lsoa11cd = lookup.lsoa11cd
+    '''
+
+    gva = pd.read_sql(sql=query, con=con)
+
+
+```
+
+
+
+```{python}
+
+gva2 = gva.loc[(gva['year'] >= 2010) & (gva['year'] <= 2023)]
+
+# need to update to latest data
+np_msoa = 'E02000398'
+ths_msoa = 'E02006794'
+
+# Filter LSOAs belonging to the target MSOA
+ths_exact_lsoa = 'E01002034'
+np_lsoas = gva[gva['msoa11cd'] == np_msoa]['lsoa11cd'].unique()
+ths_lsoas = gva[gva['msoa11cd'] == ths_msoa]['lsoa11cd'].unique()
+
+gva3 = gva2.copy()
+
+gva3 = gva3.loc[gva3['lsoa11cd'] == ths_exact_lsoa]
+
+ths_profit = pd.DataFrame({
+    'year': [2019,2020,2021,2022,2023],
+    'ths_profit': [147873,33785,20563,40061,61685]
+}
+)
+
+ths_profit['ths_profit'] = ths_profit['ths_profit'] / 1000
+
+gva3 = gva3.merge(ths_profit, how='left', on='year')
+
+gva3['adjusted_gva'] = gva3['gva']
+
+# Create a mask for the years you want
+mask = gva3['year'].isin([2019, 2020, 2021, 2023])
+
+# Adjust 'adjusted_gva' only for the selected years
+gva3.loc[mask, 'adjusted_gva'] = gva3.loc[mask, 'adjusted_gva'] - gva3.loc[mask, 'ths_profit']
+
+
+
+print('np: ' + np_lsoas)
+print('ths: ' + ths_lsoas)
+fig, ax = plt.subplots(figsize=(10, 10))
+
+for lsoa, df in gva2.groupby('lsoa11cd'):
+    
+    if lsoa in np_lsoas:
+        # Highlighted line
+        ax.plot(
+            df['year'], df['gva'],
+            linewidth=2,
+            label=lsoa,   # legend or for debugging
+            color=jk_colours[3]
+        )
+        
+        # Label the line at its last timepoint
+        if lsoa == 'E01002037':
+            print(df['gva'].iloc[0])
+            ax.text(
+                df['year'].iloc[0] + .2 ,
+                df['gva'].iloc[0],
+                lsoa,
+                # fontsize=8,
+                fontweight='bold',
+                color=jk_colours[3],
+                va='center',
+                ha='left'
+            )
+    
+    if lsoa in ths_lsoas:
+        # Highlighted line
+        ax.plot(
+            df['year'], df['gva'],
+            linewidth=2,
+            label=lsoa,   # legend or for debugging
+            color=jk_colours[0]
+        )
+        
+        # Label the line at its last timepoint
+        # ax.text(
+        #     df['year'].iloc[1] + 2,
+        #     df['gva'].iloc[1],
+        #     '',
+        #     fontsize=8,
+        #     fontweight='bold',
+        #     color=jk_colours[0],
+        #     va='center'
+        # )
+        
+    else:
+        # Faded background lines
+        ax.plot(
+            df['year'], df['gva'],
+            color='lightgrey',
+            linewidth=0.4,
+            linestyle='dashed'
+        )
+
+ax.plot(
+    gva3['year'], gva3['adjusted_gva'],
+    linewidth=2,
+    label=lsoa,   # legend or for debugging
+    color=jk_colours[0],
+    linestyle='dashed'
+)
+
+        
+# Label the line at its last timepoint
+ax.text(
+    gva3['year'].iloc[0] + .2,
+    gva3['gva'].iloc[0],
+    'Tottenham Hotspur LSOA',
+    # fontsize=8,
+    fontweight='bold',
+    color=jk_colours[0],
+    va='center',
+    ha='left'
+)
+# ax.set_title(f"GVA (2019–2023) LSOAs in {target_msoa} highlighted")
+ax.set_xlabel("Year")
+ax.set_ylabel("GVA (£ million)")
+
+ax.annotate(
+    xy=(0.99, -0.18),                
+    xycoords='axes fraction',   
+    text="Pink lines are NP LSOAs\nTeal lines are THS LSOAs\nDotted teal line is THS LSOA GVA minus Tottenham Hotspur's profit before tax from 2019\nGrey lines are other Haringey LSOAs\nE01002037 is the NP LSOA immediately adjacent to Northumberland Park Train Station and the Tottenham Marshes",
+    ha='right',
+    size=10
+)
+
+plt.tight_layout()
+plt.show()
+
+```
+
+
+
+```{python}
+# let's do msoa level
+
+# first get pop ests at lsoa
+
+with engine.connect() as con:
+    query = '''
+            SELECT * FROM
+            population_lsoa WHERE
+            lad21nm = 'E09000014'
+    '''
+
+    lsoa11_pop = pd.read_sql(sql=query, con=con)
+
+gva2 = gva2.merge(lsoa11_pop[['lsoa11cd','population']], how='right', on='lsoa11cd')
+
+# Get total msoa population
+gva2['msoa_population'] = gva2.groupby(['msoa11cd','year'])['population'].transform('sum')
+
+# Calcualte lsoa weights
+gva2['lsoa_weight'] = gva2['population'] / gva2['msoa_population']
+
+# Weight each lsoa's gva
+gva2['gva_weighted'] = gva2['gva'] * gva2['lsoa_weight']
+
+gva2_msoa = gva2.groupby(['msoa11cd','year'])['gva_weighted'].sum()
+
+test = gva2.loc[(gva2['msoa11cd']=='E02000398') & (gva2['year']==2019)]
+ ```
+
+
+```{python}
+query = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2400_1.data.csv?geography=1245708671...1245708705,1245714941&cell=0&measures=20100'
+
+data_dir = os.path.join('..','data')
+filepath = os.path.join(data_dir, 'gva_msoa_haringey.csv')
+if not os.path.isfile(filepath):
+    response = requests.get(query)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else: 
+    print('Loading data')
+
+gva_msoa = pd.read_csv(filepath)
+
+gva_msoa = janitor.clean_names(gva_msoa)
+
+gva_msoa = gva_msoa.rename(
+    columns = {
+        'date': 'year',
+        'geography_code': 'msoa11cd',
+        'obs_value': 'gva'
+
+    }
+)
+
+gva_msoa = gva_msoa[['msoa11cd','year','gva']]
+```
+
+
+```{python}
+# plot msoa
+
+gva_msoa2 = gva_msoa.loc[(gva_msoa['year'] >= 2010) & (gva_msoa['year'] <= 2023)]
+
+gva_msoa2 = gva_msoa2.sort_values(by='year')
+# need to update to latest data
+np_msoa = 'E02000398'
+ths_msoa = 'E02006794'
+
+# # Filter LSOAs belonging to the target MSOA
+# ths_exact_lsoa = 'E01002034'
+# np_lsoas = gva[gva['msoa11cd'] == np_msoa]['lsoa11cd'].unique()
+# ths_lsoas = gva[gva['msoa11cd'] == ths_msoa]['lsoa11cd'].unique()
+
+gva3 = gva_msoa2.copy()
+
+gva3 = gva3.loc[gva3['msoa11cd'] == ths_msoa]
+
+ths_profit = pd.DataFrame({
+    'year': [2010, 2011, 2012, 2013, 2014,2015,2016,2017,2018,2019,2020,2021,2022,2023],
+    'ths_profit': [22674,32294,14195,10499,26440,34016,47327,81406,151979,147873,33785,20563,40061,61685],
+    'ths_revenue': [119814,163486,144156,147392,180541,196377,209770,309674,380697, 460695,402386,361872,444028,549633],
+    'ths_profit_before_exc': [25444,37578,23023,23393,36040,46746,63303,120916,162547,172732,115284,97084,112254,138663]
+}
+)
+
+cols = ['ths_profit','ths_revenue','ths_profit_before_exc']
+ths_profit[cols] = ths_profit[cols] / 1000
+
+gva3 = gva3.merge(ths_profit, how='left', on='year')
+
+gva3['adjusted_gva'] = gva3['gva']
+
+# Create a mask for the years you want
+mask = gva3['year'].isin([2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023])
+
+# Adjust 'adjusted_gva' only for the selected years
+gva3.loc[mask, 'adjusted_gva'] = gva3.loc[mask, 'adjusted_gva'] - gva3.loc[mask, 'ths_profit']
+
+
+
+# print('np: ' + np_lsoas)
+# print('ths: ' + ths_lsoas)
+fig, ax = plt.subplots(figsize=(10, 10))
+
+for msoa, df in gva_msoa2.groupby('msoa11cd'):
+    
+    if msoa == 'E02000398':
+        # Highlighted line
+        ax.plot(
+            df['year'], df['gva'],
+            linewidth=2,
+            label='Northumberland Park',   # legend or for debugging
+            color=jk_colours[3]
+        )
+        
+    # # Label the line at its last timepoint
+
+    #     print(df['gva'].iloc[0])
+    #     ax.text(
+    #         df['year'].iloc[-1] + .2 ,
+    #         df['gva'].iloc[-1],
+    #         'Northumberland Park',
+    #         # fontsize=8,
+    #         fontweight='bold',
+    #         color=jk_colours[3],
+    #         va='center',
+    #         ha='left'
+    #     )
+    
+    if msoa == 'E02006794':
+        # Highlighted line
+        ax.plot(
+            df['year'], df['gva'],
+            linewidth=2,
+            label='Tottenham Hotspur MSOA',   # legend or for debugging
+            color=jk_colours[0]
+        )
+        
+        # Label the line at its last timepoint
+        # ax.text(
+        #     gva3['year'].iloc[-1] + .2,
+        #     gva3['gva'].iloc[-1],
+        #     'Tottenham Hotspur MSOA',
+        #     # fontsize=8,
+        #     fontweight='bold',
+        #     color=jk_colours[0],
+        #     va='center',
+        #     ha='left'
+        # )        
+    else:
+        # Faded background lines
+        ax.plot(
+            df['year'], df['gva'],
+            color='lightgrey',
+            linewidth=0.8,
+            linestyle='dashed'
+        )
+
+ax.plot(
+    gva3['year'], gva3['adjusted_gva'],
+    linewidth=2,
+    label='',   # legend or for debugging
+    color=jk_colours[0],
+    linestyle='dashed'
+)
+
+ax.legend()
+plt.xticks(np.arange(2010,2024,1))
+
+# ax.set_title(f"GVA (2019–2023) LSOAs in {target_msoa} highlighted")
+ax.set_xlabel("Year", labelpad=20)
+ax.set_ylabel("GVA (£ million)")
+
+ax.annotate(
+    xy=(0.99, -0.18),                
+    xycoords='axes fraction',   
+    text="Dotted teal line is THS MSOA GVA minus Tottenham Hotspur's profit before tax from 2019\nGrey lines are other Haringey MSOAs",
+    ha='right',
+    size=10
+)
+
+plt.tight_layout()
+plt.show()
+```
+
+
+```{python}
+fig, ax = plt.subplots(figsize=(10,10))
+
+ax.plot(
+    ths_profit['year'],
+    ths_profit['ths_revenue'],
+    label='Revenue'
+)
+
+ax.plot(
+    ths_profit['year'],
+    ths_profit['ths_profit_before_exc'],
+    label='Profit before depreciation and exceptional items'
+)
+
+ax.plot(
+    ths_profit['year'],
+    ths_profit['ths_profit'],
+    label='Profit after depreciation and exceptional items'
+)
+
+ax.set_ylabel('GVA (£ million)')
+ax.set_xlabel('Year')
+
+ax.legend()
+ax.set_xticks(np.arange(2019,2024,1));
+```
+
+
+```{python}
+import geopandas as gpd
+with engine.connect() as con:
+    query = ''' 
+    WITH lookup AS 
+    (SELECT DISTINCT msoa11cd 
+    FROM pcode_census11_lookup 
+    WHERE lad21nm IN ('Haringey', 'Enfield','Waltham Forest'))
+    SELECT foo.* FROM
+    msoa11_boundaries foo
+    RIGHT JOIN lookup
+    ON foo.msoa11cd = lookup.msoa11cd
+    '''
+
+    msoa_gdf = gpd.read_postgis(sql=query, con=con, geom_col='geometry')
+    
+```
+
+
+maybe i should apply a buffer
+
+```{python}
+import contextily as cx
+fig, ax = plt.subplots(figsize=(12,12))
+
+msoa_gdf.boundary.plot(ax=ax)
+
+for idx,row in msoa_gdf.iterrows():
+    geom = row['geometry']
+    centroid = geom.centroid
+    x, y = centroid.x, centroid.y
+
+    ax.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=8, ha='center')
+cx.add_basemap(ax=ax, crs=msoa_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax.set_axis_off()
+```
+
+
+```{python}
+ths_gdf = msoa_gdf.loc[msoa_gdf['msoa11cd']=='E02006794']
+point = ths_gdf.geometry.centroid.iloc[0]
+x, y = centroid.x, centroid.y
+origin_code = ths_gdf['msoa11cd'].iloc[0]
+with engine.connect() as con:
+    query = f'''
+        WITH points AS (
+            SELECT '{origin_code}' AS origin_msoa11cd,
+                   {x} AS x,
+                   {y} AS y)
+        SELECT msoa.msoa11cd AS intersected_msoa11cd, p.origin_msoa11cd, p.x, p.y
+        FROM msoa11_boundaries msoa
+        JOIN points p
+            ON ST_Intersects(ST_Buffer(ST_Point(p.x, p.y, 27700), 1000), msoa.geometry)
+            '''
+    
+    intersecting_msoas = pd.read_sql(sql=query, con=con)
+
+intersecting_msoas_list = intersecting_msoas['intersected_msoa11cd'].unique().tolist()
+
+```
+
+
+```{python}
+intersecting_msoas_gdf = msoa_gdf.loc[msoa_gdf['msoa11cd'].isin(intersecting_msoas_list)]
+
+fig, ax = plt.subplots(figsize=(12,12))
+
+intersecting_msoas_gdf.boundary.plot(ax=ax)
+
+for idx,row in intersecting_msoas_gdf.iterrows():
+    geom = row['geometry']
+    centroid = geom.centroid
+    x, y = centroid.x, centroid.y
+
+    ax.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=8, ha='center')
+cx.add_basemap(ax=ax, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax.set_axis_off()
+```
+
+
+```{python}
+gva_msoa2 = gva_msoa.loc[(gva_msoa['year'] >= 2010) & (gva_msoa['year'] <= 2023)]
+gva3 = gva_msoa2.loc[gva_msoa2['msoa11cd'].isin(intersecting_msoas_list)]
+
+gva3 = gva3.groupby('year', as_index=False)['gva'].sum()
+
+gva3 = gva3.merge(ths_profit, how='left', on='year')
+
+gva3['adjusted_gva_profit1'] = gva3['gva']
+gva3['adjusted_gva_profit2'] = gva3['gva']
+gva3['adjusted_gva_revenue'] = gva3['gva']
+
+# Create a mask for the years you want
+mask = gva3['year'].isin([2010, 2011, 2012, 2013, 2014, 2015, 2016, 2017, 2018, 2019, 2020, 2021, 2022, 2023])
+
+# Adjust 'adjusted_gva' only for the selected years
+gva3.loc[mask, 'adjusted_gva_profit1'] = gva3.loc[mask, 'adjusted_gva_profit1'] - gva3.loc[mask, 'ths_profit']
+
+gva3.loc[mask, 'adjusted_gva_profit2'] = gva3.loc[mask, 'adjusted_gva_profit2'] - gva3.loc[mask, 'ths_profit_before_exc']
+
+gva3.loc[mask, 'adjusted_gva_revenue'] = gva3.loc[mask, 'adjusted_gva_revenue'] - gva3.loc[mask, 'ths_revenue']
+```
+
+```{python}
+import pickle
+# get ths point
+file = os.path.join('..','data','stadia_gdf.pkl')
+with open(file, 'rb') as picklefile:
+        stadiums_gdf = pickle.load(picklefile)
+
+tott = stadiums_gdf.loc[stadiums_gdf['Stadium'].str.contains('Tottenham')]
+tott = tott.to_crs(intersecting_msoas_gdf.crs)
+```
+
+```{python}
+fig, (ax, ax1) = plt.subplots(2, 1, figsize=(12,12))
+
+ax.plot(
+    gva3['year'],
+    gva3['adjusted_gva_revenue'],
+    label='GVA - THS revenue',
+    color=jk_colours[3]
+)
+
+ax.plot(
+    gva3['year'],
+    gva3['adjusted_gva_profit2'],
+    label='GVA - THS profit before dep. & exc.',
+    color=jk_colours[2]
+)
+
+ax.plot(
+    gva3['year'],
+    gva3['adjusted_gva_profit1'],
+    label='GVA - THS profit after dep. & exc.',
+    color=jk_colours[1]
+)
+
+ax.plot(
+    gva3['year'],
+    gva3['gva'],
+    label='Total GVA',
+    color=jk_colours[0]
+)
+
+ax.set_ylabel('GVA (£ million)')
+ax.set_xlabel('Year')
+ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
+msoas = ", ".join(intersecting_msoas_list)
+
+# ax.annotate(
+#     xy=(0.99, -0.15),                
+#     xycoords='axes fraction',   
+#     text=f'*These MSOAs are {msoas}',
+#     ha='right',
+#     size=10
+# )
+
+ax.legend()
+ax.set_xticks(np.arange(2010,2024,1));
+
+
+intersecting_msoas_gdf.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
+
+tott.plot(ax=ax1, marker='o', color=jk_colours[3], markersize=100)
+
+for idx,row in intersecting_msoas_gdf.iterrows():
+    geom = row['geometry']
+    centroid = geom.centroid
+    x, y = centroid.x, centroid.y
+
+    ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax1.annotate(
+    xy=(0.99, -0.1),                
+    xycoords='axes fraction',   
+    text=f'Pink dot indicates location of THS',
+    ha='right',
+    size=10
+)
+
+ax1.set_axis_off()
+ax1.set_title('*MSOAs included within the 1km area around THS')
+
+plt.tight_layout()
+```
