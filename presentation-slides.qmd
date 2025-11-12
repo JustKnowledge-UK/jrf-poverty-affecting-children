@@ -1,0 +1,20 @@
+---
+title: "Understanding Poverty in Place"
+author: "Just Knowledge"
+format: revealjs
+---
+
+## About Just Knowledge
+Test
+
+## Data Democracy - What and Why
+
+## Findings 1
+
+## Findings 2
+
+## Findings 3
+
+## Finding 4
+
+## Recommendations
