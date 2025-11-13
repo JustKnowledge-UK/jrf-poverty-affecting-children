@@ -1,0 +1,76 @@
+:root {
+  --page-bg: #efe9df;
+}
+
+body {
+  font-family: "Inclusive Sans", sans-serif;
+  background-color: var(--page-bg);
+  color: black
+}
+
+a,
+a:visited,
+.footnote-ref,
+.footnote-reference,
+a.footnote,
+sup a,
+a[href^="#fn-"] {
+  color: #1f5268;
+}
+
+
+/* footnote headers */
+#footnotes > h2,
+#footnotes > h3 {
+  display: none;
+}
+
+/* this is weird white band at end of doc before footnotes */
+div#quarto-appendix.default {
+  background-color: var(--page-bg);
+  padding: 0;
+  margin: 0;
+  border: none;
+}
+
+blockquote {
+  border-left-color: #e277c6;
+  border-color: #e277c6;
+  background-color: color-mix(in srgb, var(--page-bg) 60%, white); 
+  color: !important;
+  border-radius: 10px;
+}
+
+blockquote p,
+blockquote * {
+  color: black !important;
+}
+
+/* Normal ToC links */
+nav#TOC a,
+nav.toc a,
+.sidebar nav a {
+  color: #1f5268;
+  text-decoration: none;
+}
+
+/* Hover state */
+nav#TOC a:hover,
+nav.toc a:hover,
+.sidebar nav a:hover {
+  background-color: none; 
+  color: #e277c6 !important; /* slightly darker text on hover */
+  border-radius: 4px;
+  padding: 2px 4px;
+}
+
+/* Active/selected section highlight */
+nav#TOC a.active,
+nav.toc a.active,
+.sidebar nav a.active {
+  background-color: none; /* stronger highlight for current section */
+  color: #e277c6 !important;
+  border-radius: 4px;
+  padding: 2px 4px;
+  border-left-color: #e277c6 !important;
+}
