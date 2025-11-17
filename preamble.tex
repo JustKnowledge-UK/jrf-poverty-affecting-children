@@ -1,0 +1,67 @@
+% brand-preamble.tex
+\usepackage{xcolor}
+\usepackage{fontspec}
+\usepackage{sectsty}
+\usepackage{pagecolor}
+\usepackage{hyperref}
+\usepackage{titling}  
+\usepackage{graphicx} 
+\usepackage{xurl}  % allows breaking at ANY character
+
+% This allows line break for long URls
+\Urlmuskip=0mu plus 2mu
+
+% \usepackage{url}
+% \def\UrlBreaks{\do\/\do-}
+% \usepackage{breakurl}
+% \usepackage[breaklinks]{hyperref}
+
+% Colors
+\definecolor{foreground}{HTML}{000000}
+\definecolor{background}{HTML}{EFE9DF}
+\definecolor{primary}{HTML}{1F5268}
+\definecolor{secondary}{HTML}{E277C6}
+\definecolor{tertiary}{HTML}{DDA078}
+
+% Fonts
+\setmainfont{InclusiveSans-Regular.ttf}[
+    BoldFont = InclusiveSans-Bold.ttf,
+    ItalicFont = InclusiveSans-Italic.ttf,
+    BoldItalicFont = InclusiveSans-BoldItalic.ttf
+]
+\newfontfamily\headingfont{InclusiveSans-Bold.ttf}
+
+% Page & text colors
+\pagecolor{background}
+\color{foreground}
+
+% % Logos above title
+% \pretitle{%
+%   \begin{center}
+%   \includegraphics[width=0.3\textwidth]{assets/nlpc_logo.png}
+%   \hspace{1cm}
+%   \includegraphics[width=0.3\textwidth]{assets/nlpc_logo.png}
+%   \par\vspace{1cm}
+%   \LARGE\headingfont
+% }
+% \posttitle{\end{center}\vspace{1cm}}
+
+% Headings
+% H1: centered, primary color, heading font
+\sectionfont{\headingfont\color{foreground}\bfseries\centering}
+
+% H2: left-aligned, bold, heading font, primary color
+\subsectionfont{\headingfont\color{foreground}\bfseries\raggedright}
+
+% H3: left-aligned, bold italic, heading font, secondary color
+\subsubsectionfont{\headingfont\color{foreground}\bfseries\itshape\raggedright}
+
+\AtBeginDocument{
+  \hypersetup{
+    colorlinks=true,
+    linkcolor=primary,
+    urlcolor=primary,
+    citecolor=primary,
+    filecolor=primary
+  }
+}
