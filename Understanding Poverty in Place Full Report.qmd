@@ -1,6 +1,6 @@
 ---
 title: "Understanding Poverty in Place: Where Data Meets Community in Northumberland Park"
-author: "Residents of Northumberland Park, Eduardo Araujo, Martina Boyce, Darius Corrigall, Lela Kogbara, Jolyon Miles-Wilson, Celestin Okoroji, Olivia Opara, Tamanda Walker, Unique West-Alese"
+author: "Residents of Northumberland Park, Eduardo Araujo, Martina Boyce, Reda Chaaban, Darius Corrigall, Susuana Gyampoh Senghor, Lela Kogbara, Jolyon Miles-Wilson, Darren Niamba, Celestin Okoroji, Olivia Opara, Jesse Udaigwe, Tamanda Walker, Unique West-Alese"
 date: 20 November 2025
 format: 
   html:
