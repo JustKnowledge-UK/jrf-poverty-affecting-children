@@ -274,6 +274,7 @@ gva3 = gva_msoa2.copy()
 
 gva3 = gva3.loc[gva3['msoa11cd'] == ths_msoa]
 
+# these figures are taken from THS annual reports
 ths_profit = pd.DataFrame({
     'year': [2010, 2011, 2012, 2013, 2014,2015,2016,2017,2018,2019,2020,2021,2022,2023],
     'ths_profit': [22674,32294,14195,10499,26440,34016,47327,81406,151979,147873,33785,20563,40061,61685],
@@ -408,7 +409,7 @@ ax.set_ylabel('GVA (£ million)')
 ax.set_xlabel('Year')
 
 ax.legend()
-ax.set_xticks(np.arange(2019,2024,1));
+ax.set_xticks(np.arange(2010,2024,1));
 ```
 
 
@@ -527,39 +528,61 @@ tott = tott.to_crs(intersecting_msoas_gdf.crs)
 ```
 
 ```{python}
-fig, (ax, ax1) = plt.subplots(2, 1, figsize=(12,12))
+lw = 3
 
-ax.plot(
-    gva3['year'],
-    gva3['adjusted_gva_revenue'],
-    label='GVA - THS revenue',
-    color=jk_colours[3]
-)
+fig, ax= plt.subplots(figsize=(8,8))
 
-ax.plot(
-    gva3['year'],
-    gva3['adjusted_gva_profit2'],
-    label='GVA - THS profit before dep. & exc.',
-    color=jk_colours[2]
-)
+# ax.plot(
+#     gva3['year'],
+#     gva3['adjusted_gva_revenue'],
+#     label='GVA - THS revenue',
+#     color=jk_colours[3]
+# )
 
-ax.plot(
-    gva3['year'],
-    gva3['adjusted_gva_profit1'],
-    label='GVA - THS profit after dep. & exc.',
-    color=jk_colours[1]
-)
+# ax.plot(
+#     gva3['year'],
+#     gva3['adjusted_gva_profit2'],
+#     label='GVA - THS profit before dep. & exc.',
+#     color=jk_colours[2]
+# )
+
+# ax.plot(
+#     gva3['year'],
+#     gva3['adjusted_gva_profit1'],
+#     label='GVA - THS profit after dep. & exc.',
+#     color=jk_colours[1]
+# )
 
 ax.plot(
     gva3['year'],
     gva3['gva'],
-    label='Total GVA',
-    color=jk_colours[0]
+    label='Total GVA in THS area',
+    color=jk_colours[0],
+    linewidth=lw,
+    marker='o'
+)
+
+ax.plot(
+    ths_profit['year'],
+    ths_profit['ths_revenue'],
+    label='THFC Revenue',
+    color=jk_colours[2],
+    linewidth=lw,
+    marker='o'
+)
+
+ax.plot(
+    ths_profit['year'],
+    ths_profit['ths_profit_before_exc'],
+    label='THFC Profit',
+    color=jk_colours[1],
+    linewidth=lw,
+    marker='o'
 )
 
 ax.set_ylabel('GVA (£ million)')
-ax.set_xlabel('Year')
-ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
+ax.set_xlabel('Year', labelpad=20)
+# ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
 msoas = ", ".join(intersecting_msoas_list)
 
 # ax.annotate(
@@ -571,30 +594,399 @@ msoas = ", ".join(intersecting_msoas_list)
 # )
 
 ax.legend()
-ax.set_xticks(np.arange(2010,2024,1));
+ax.set_xticks(np.arange(2010,2024,2));
+ax.get_yaxis().set_major_formatter(
+    mpl.ticker.FuncFormatter(lambda x, p: format(int(x), ',')))
+
+# intersecting_msoas_gdf.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
+
+# tott.plot(ax=ax1, marker='o', color=jk_colours[3], markersize=100)
+
+# for idx,row in intersecting_msoas_gdf.iterrows():
+#     geom = row['geometry']
+#     centroid = geom.centroid
+#     x, y = centroid.x, centroid.y
+
+#     ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+# cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+# ax1.annotate(
+#     xy=(0.99, -0.1),                
+#     xycoords='axes fraction',   
+#     text=f'Pink dot indicates location of THS',
+#     ha='right',
+#     size=10
+# )
+
+# ax1.set_axis_off()
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+
+plt.tight_layout()
+
+fig.savefig(os.path.join('..','outputs','gva_revenue_profit.png'), dpi=300, bbox_inches='tight')
+
+```
 
 
+You've got your basket of MSOAs from which you subtract revenue and your measures of profit. I'd slim that down to just revenue and "profit before dep. and exc." and argue it will be somewhere inbetween the two.
+
+I'd then put in some comparators - i.e. the other MSOAs in Haringey and then a broader comparator area, like London or comparable North London LADs. The levels will be different, but you can index them to 100 for a base year to make them more comparable, if it helps. Or put the north London comparator on a different axis, perhaps.
+
+That will allow you to look at how that area has done compared to surrounding areas. 
+
+Finally, note that this is all in current prices. So GVA will have gone up because of inflation in this period. So even no change here means a fall in activity.
+
+
+First let's focus on THS area
+
+```{python}
+
+base_year = 2016
+
+# Convert to an index
+vars_of_interest = ['gva','adjusted_gva_profit2', 'adjusted_gva_revenue']
+
+gva_indexed = gva3[['year'] + vars_of_interest].copy()
+
+gva_indexed = gva_indexed.loc[gva_indexed['year']>=base_year]
+
+for var in vars_of_interest:
+    base_value = gva_indexed.loc[gva_indexed['year']==base_year, var].iloc[0]
+    gva_indexed[var + '_index'] = gva_indexed[var].div(base_value) * 100
+
+# other areas
+other_areas = gva_msoa.loc[~gva_msoa['msoa11cd'].isin(intersecting_msoas_list)]
+
+# There was confusion but remember intersecting mosas contains 2 areas from enfield
+# any(item in other_areas.msoa11cd.unique().tolist() for item in intersecting_msoas_list)
+# any(item in intersecting_msoas_list for item in other_areas.msoa11cd.unique().tolist())
+other_areas = other_areas.loc[(other_areas['year'] >= base_year) & (other_areas['year'] <= 2023)]
+
+other_areas_indexed = other_areas.copy()
+
+# Create a new column for the index
+other_areas_indexed['gva_index'] = None
+
+for msoa, group in other_areas_indexed.groupby('msoa11cd'):
+    # Get base year value for this MSOA (in 2010)
+    base = group.loc[group['year'] == base_year, 'gva']
+    
+    base_value = base.iloc[0]
+    # Assign the indexed values back only for this MSOA
+    other_areas_indexed.loc[group.index, 'gva_index'] = group['gva'] / base_value * 100
+
+# Lodnon GVA
+# Endpoint
+base = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2400_1.data.csv?"
+# Type of measure (value/percent)
+measures = "measures=20100"
+
+cell = "cell=0"
+
+# London
+geography = 'geography=E12000007'
+
+# Build the query
+query = base + geography + "&" + cell + "&" + measures
+
+data_dir = os.path.join('..','data')
+filepath = os.path.join(data_dir, 'gva_london.csv')
+if not os.path.isfile(filepath):
+    response = requests.get(query)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else: 
+    print('Loading data')
+
+gva_london = pd.read_csv(filepath)
+
+gva_london = janitor.clean_names(gva_london)
+
+gva_london = gva_london.rename(
+    columns = {
+        'date': 'year',
+        'obs_value': 'gva'
+
+    }
+)
+
+gva_london = gva_london[['year','gva']]
+
+gva_london = gva_london.loc[(gva_london['year'] >= base_year) & (gva_london['year'] <= 2023)]
+
+gva_london_indexed = gva_london.copy()
+
+# Create a new column for the index
+gva_london_indexed['gva_index'] = None
+
+# Get base year value for this MSOA (in 2010)
+base_value = gva_london_indexed.loc[gva_london_indexed['year'] == base_year, 'gva'].iloc[0]
+
+# Assign the indexed values back only for this MSOA
+gva_london_indexed['gva_index'] = gva_london_indexed['gva'] / base_value * 100
+
+# Plot
+fig, ax = plt.subplots(figsize=(8,8))
+
+lw = 3
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['gva_index'],
+    label='THS area: Total GVA',
+    color=jk_colours[0],
+    linewidth=lw
+)
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['adjusted_gva_profit2_index'],
+    label='THS area: GVA - THFC profit',
+    color=jk_colours[1],
+    linewidth=lw
+)
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['adjusted_gva_revenue_index'],
+    label='THS area: GVA - THFC revenue',
+    color=jk_colours[2],
+    linewidth=lw
+)
+
+# plot other msoas in haringey
+for i, (_, group) in enumerate(other_areas_indexed.groupby('msoa11cd')):
+    ax.plot(
+        group['year'],
+        group['gva_index'],
+        label='Other MSOAs in Haringey' if i==0 else None,
+        color='grey',
+        alpha=0.2
+    )
+
+# plot London
+ax.plot(
+    gva_london_indexed['year'],
+    gva_london_indexed['gva_index'],
+    label='London: Total GVA',
+    color=jk_colours[3],
+    linewidth=lw,
+    linestyle='dashed'
+)
+
+
+# ax.plot(
+#     gva_indexed['year'],
+#     gva_indexed['adjusted_gva_profit1'],
+#     label='GVA - THS profit after dep. & exc.',
+#     color=jk_colours[1]
+# )
+
+
+ax.set_ylabel(f'GVA Index ({base_year} = 100)')
+ax.set_xlabel('Year', labelpad=20)
+# ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
+msoas = ", ".join(intersecting_msoas_list)
+
+# ax.annotate(
+#     xy=(0.99, -0.15),                
+#     xycoords='axes fraction',   
+#     text=f'*These MSOAs are {msoas}',
+#     ha='right',
+#     size=10
+# )
+
+# Get current handles and labels
+handles, labels = ax.get_legend_handles_labels()
+
+# Define your preferred order (by label name)
+if base_year == 2016:
+    order = [
+        'London: Total GVA',
+        'THS area: Total GVA',
+        'THS area: GVA - THFC profit',
+        'THS area: GVA - THFC revenue',
+        'Other MSOAs in Haringey'
+    ]
+elif base_year == 2018:
+    order = [
+        'THS area: GVA - THFC profit',
+        'London: Total GVA',
+        'THS area: Total GVA',
+        'THS area: GVA - THFC revenue',
+        'Other MSOAs in Haringey'
+
+    ]
+
+# Apply the order (filtering in case some labels don’t exist)
+handles = [h for _, h in sorted(zip(labels, handles), key=lambda x: order.index(x[0])) if _ in order]
+labels = [l for l in order if l in labels]
+
+# Plot legend in the new order
+ax.legend(handles, labels)
+
+ax.set_xticks(np.arange(base_year,2024,1));
+# plt.xticks(
+#     rotation=45, 
+#     ha='right'
+#     )
+
+
+# intersecting_msoas_gdf.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
+
+# tott.plot(ax=ax1, marker='o', color=jk_colours[2], markersize=30)
+
+# # for idx,row in intersecting_msoas_gdf.iterrows():
+# #     geom = row['geometry']
+# #     centroid = geom.centroid
+# #     x, y = centroid.x, centroid.y
+
+# #     ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+# cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+# ax1.annotate(
+#     xy=(0.99, -0.1),                
+#     xycoords='axes fraction',   
+#     text=f'Orange dot indicates location of THS',
+#     ha='right',
+#     size=10
+# )
+
+# ax1.set_axis_off()
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+
+plt.tight_layout()
+
+fig.savefig(os.path.join('..','outputs','gva_index_base' + str(base_year) + '.png'), dpi=300, bbox_inches='tight')
+```
+
+```{python}
+fig, ax = plt.subplots(figsize=(8,8))
+
+lw = 3
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['gva'],
+    label='THS area: Total GVA',
+    color=jk_colours[0],
+    linewidth=lw
+)
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['adjusted_gva_profit2'],
+    label='THS area: GVA - THS profit',
+    color=jk_colours[1],
+    linewidth=lw
+)
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['adjusted_gva_revenue'],
+    label='THS area: GVA - THS revenue',
+    color=jk_colours[2],
+    linewidth=lw
+)
+
+# plot other msoas in haringey
+for i, (_, group) in enumerate(other_areas_indexed.groupby('msoa11cd')):
+    ax.plot(
+        group['year'],
+        group['gva'],
+        label='Other MSOAs in Haringey' if i==0 else None,
+        color='grey',
+        alpha=0.2
+    )
+
+# plot London
+# ax.plot(
+#     gva_london_indexed['year'],
+#     gva_london_indexed['gva'],
+#     label='London: Total GVA',
+#     color=jk_colours[3],
+#     linewidth=lw,
+#     linestyle='dashed'
+# )
+
+
+# ax.plot(
+#     gva_indexed['year'],
+#     gva_indexed['adjusted_gva_profit1'],
+#     label='GVA - THS profit after dep. & exc.',
+#     color=jk_colours[1]
+# )
+
+
+ax.set_ylabel(f'GVA (£million)')
+ax.set_xlabel('Year', labelpad=20)
+# ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
+msoas = ", ".join(intersecting_msoas_list)
+
+# ax.annotate(
+#     xy=(0.99, -0.15),                
+#     xycoords='axes fraction',   
+#     text=f'*These MSOAs are {msoas}',
+#     ha='right',
+#     size=10
+# )
+
+ax.legend()
+ax.set_xticks(np.arange(base_year,2024,1));
+# plt.xticks(
+#     rotation=45, 
+#     ha='right'
+#     )
+
+
+# intersecting_msoas_gdf.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
+
+# tott.plot(ax=ax1, marker='o', color=jk_colours[2], markersize=30)
+
+# # for idx,row in intersecting_msoas_gdf.iterrows():
+# #     geom = row['geometry']
+# #     centroid = geom.centroid
+# #     x, y = centroid.x, centroid.y
+
+# #     ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+# cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+# ax1.annotate(
+#     xy=(0.99, -0.1),                
+#     xycoords='axes fraction',   
+#     text=f'Orange dot indicates location of THS',
+#     ha='right',
+#     size=10
+# )
+
+# ax1.set_axis_off()
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+
+plt.tight_layout()
+
+fig.savefig(os.path.join('..','outputs','gva_base' + str(base_year) + '.png'), dpi=300, bbox_inches='tight')
+```
+
+```{python}
+fig, ax1 = plt.subplots(figsize=(8,8))
 intersecting_msoas_gdf.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
 
-tott.plot(ax=ax1, marker='o', color=jk_colours[3], markersize=100)
+tott.plot(ax=ax1, marker='o', color=jk_colours[2], markersize=30)
 
-for idx,row in intersecting_msoas_gdf.iterrows():
-    geom = row['geometry']
-    centroid = geom.centroid
-    x, y = centroid.x, centroid.y
+# for idx,row in intersecting_msoas_gdf.iterrows():
+#     geom = row['geometry']
+#     centroid = geom.centroid
+#     x, y = centroid.x, centroid.y
 
-    ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+#     ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
 cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
 ax1.annotate(
-    xy=(0.99, -0.1),                
+    xy=(0.99, -0.03),                
     xycoords='axes fraction',   
-    text=f'Pink dot indicates location of THS',
+    text=f'Orange dot indicates location of THS',
     ha='right',
     size=10
 )
 
 ax1.set_axis_off()
-ax1.set_title('*MSOAs included within the 1km area around THS')
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+fig.savefig(os.path.join('..','outputs','ths_1km_msoas.png'), dpi=300, bbox_inches='tight')
 
-plt.tight_layout()
 ```
