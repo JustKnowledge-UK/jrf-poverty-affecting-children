@@ -20,6 +20,8 @@ import pandas as pd
 from sqlalchemy import create_engine
 import matplotlib.pyplot as plt
 from sqlalchemy import create_engine
+import janitor
+import matplotlib as mpl
 
 # Load DB config
 config = configparser.ConfigParser()
@@ -34,6 +36,13 @@ conn_str = (
 
 # Create engine
 engine = create_engine(conn_str)
+
+# Colours
+with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
+    jk_colours = [line.strip() for line in file]
+
+mpl.rcParams['font.family'] = 'Open Sans'
+mpl.rcParams['font.size'] = 16
 
 ```
 
@@ -117,6 +126,7 @@ Plot IOD for Haringey, highlighting Northumberland Park MSOA in black and other 
 ```{python}
 # Select subset of domains so plot isn't information overload
 domains_of_interest = [
+    'index_of_multiple_deprivation',
     'income',
     'employment',
     'education_skills_and_training',
@@ -224,3 +234,628 @@ plt.show()
 
 fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=800)
 ```
+
+## IMD 2025
+
+```{python}
+
+data_dir = os.path.join('..','data')
+
+filepath = os.path.join(data_dir, 'iod25.csv')
+
+url = 'https://assets.publishing.service.gov.uk/media/68ff5daabcb10f6bf9bef911/File_7_IoD2025_All_Ranks_Scores_Deciles_Population_Denominators.csv'
+
+if os.path.isfile(filepath)==False:
+    response = requests.get(url)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else:
+    print('Data already acquired. Loading it.')
+
+iod25 = pd.read_csv(filepath)
+
+iod25 = janitor.clean_names(iod25)
+iod25.columns = iod25.columns.str.strip('_')
+
+domains_of_interest = [
+    'index_of_multiple_deprivation',
+    'income',
+    'employment',
+    'education_skills_and_training',
+    'health_deprivation_and_disability',
+    'crime',
+    'barriers_to_housing_and_services',
+    'living_environment',
+    'income_deprivation_affecting_children',
+    'income_deprivation_affecting_older_people',
+    'children_and_young_people_sub-domain',
+    'adult_skills_sub-domain',
+    'geographical_barriers_sub-domain',
+    'wider_barriers_sub-domain',
+    'indoors_sub-domain',
+    'outdoors_sub-domain',
+]
+
+def clean_domain_name(domain):
+    return domain.replace('_', ' ').title()
+domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
+
+# Reorder columns
+cols = [
+    col for col in iod25.columns
+    if 'score' in col
+    and any(domain in col for domain in domains_of_interest)
+]
+
+population_cols = [
+    col for col in iod25.columns 
+    if ('population' in col)
+    or ('dependent_children' in col)
+]
+
+iod25 = iod25.rename(
+    columns = {
+    'lsoa_code_2021': 'lsoa21cd',
+    'lsoa_name_2021': 'lsoa21nm',
+    'local_authority_district_code_2024': 'lad24cd',
+    'local_authority_district_name_2024': 'lad24nm',
+
+    })
+
+iod25 = iod25[['lsoa21cd','lsoa21nm','lad24cd','lad24nm'] + cols + population_cols]
+```
+
+```{python}
+with engine.connect() as con:
+    query = '''SELECT DISTINCT lsoa21cd, msoa21cd
+            FROM pcode_census21_lookup
+        '''
+    lookup21 = pd.read_sql(query, con = con)
+
+```
+
+```{python}
+
+iod25_msoa = iod25.copy()
+
+iod25_msoa = iod25_msoa.merge(lookup21, how='left', on='lsoa21cd')    
+
+cols = iod25_msoa.columns[iod25_msoa.columns.str.contains('score')]
+
+# Note - denominator may need to be different for particular domains
+# Create a dictionary to index the correct population column
+# These are metrics with specific denominators
+special_cols = [
+    'income_deprivation_affecting_children_index_idaci_score_rate',
+    'income_deprivation_affecting_older_people_idaopi_score_rate',
+    'employment_score_rate'
+]
+
+# These are the metrics with the general pop denominator
+normal_cols = [col for col in cols if col not in special_cols]
+
+# Map the special metrics to specific denoms
+pop_dict = {
+    'income_deprivation_affecting_children_index_idaci_score_rate': 'dependent_children_aged_0_15_mid_2022',
+    'income_deprivation_affecting_older_people_idaopi_score_rate': 'older_population_aged_60_and_over_mid_2022',
+    'employment_score_rate': 'working_age_population_18_66_for_use_with_employment_deprivation_domain_mid_2022'
+}
+
+# Map the normal metrics to the total pop denom
+temp_dict = {col: 'total_population_mid_2022' for col in normal_cols}
+
+# Add the two dicts
+pop_dict.update(temp_dict)
+
+# Multiply each score by population
+for col in cols:
+    population_col = pop_dict[col]
+    # print(col)
+    # print(population_col)
+    iod25_msoa[col + '_weighted'] = iod25_msoa[col] * iod25_msoa[population_col]
+
+# Group by MSOA and sum the weighted scores and population
+grouped = iod25_msoa.groupby(['msoa21cd','lad24cd','lad24nm']).agg(
+    {col + '_weighted': 'sum' for col in cols} |
+    {'total_population_mid_2022': 'sum',
+    'dependent_children_aged_0_15_mid_2022': 'sum',
+    'older_population_aged_60_and_over_mid_2022': 'sum',
+    'working_age_population_18_66_for_use_with_employment_deprivation_domain_mid_2022': 'sum'}
+).reset_index()
+
+# Calculate weighted average, rank, and decile
+for col in cols:
+    avg_col = col + '_weighted_avg'
+    rank_col = col + '_rank'
+    decile_col = col + '_decile'
+    population_col = pop_dict[col]
+
+    # print(col + ': ' + population_col)
+    # print(grouped[population_col])
+
+    grouped[avg_col] = grouped[col + '_weighted'] / grouped[population_col]
+    grouped[rank_col] = grouped[avg_col].rank(method='min', ascending=False)
+    grouped[decile_col] = pd.qcut(grouped[rank_col], q=10, labels=range(1, 11), duplicates='drop')
+
+# Select final columns to keep
+iod25_msoa = grouped[['msoa21cd','lad24cd','lad24nm'] + 
+                   [col + suffix for col in cols for suffix in ['_weighted_avg', '_rank', '_decile']]]
+
+
+```
+
+## IMD 2019
+
+
+```{python}
+data_dir = os.path.join('..','data')
+
+filepath = os.path.join(data_dir, 'iod19.csv')
+
+url = 'https://assets.publishing.service.gov.uk/media/5dc407b440f0b6379a7acc8d/File_7_-_All_IoD2019_Scores__Ranks__Deciles_and_Population_Denominators_3.csv'
+
+if os.path.isfile(filepath)==False:
+    response = requests.get(url)
+    with open(filepath, 'wb') as file:
+        file.write(response.content)
+else:
+    print('Data already acquired. Loading it.')
+
+iod19 = pd.read_csv(filepath)
+
+iod19 = janitor.clean_names(iod19)
+iod19.columns = iod19.columns.str.strip('_')
+
+# Reorder columns
+cols = [
+    col for col in iod19.columns
+    if 'score' in col
+    and any(domain in col for domain in domains_of_interest)
+]
+
+population_cols = [
+    col for col in iod19.columns 
+    if ('population' in col)
+    or ('dependent_children' in col)
+]
+
+iod19 = iod19.rename(
+    columns = {
+    'lsoa_code_2011': 'lsoa11cd',
+    'lsoa_name_2011': 'lsoa11nm',
+    'local_authority_district_code_2019': 'lad19cd',
+    'local_authority_district_name_2019': 'lad19nm',
+
+    })
+
+iod19 = iod19[['lsoa11cd','lsoa11nm','lad19cd','lad19nm'] + cols + population_cols]
+```
+
+```{python}
+with engine.connect() as con:
+    query = '''SELECT DISTINCT lsoa11cd, msoa11cd
+            FROM pcode_census11_lookup
+        '''
+    lookup11 = pd.read_sql(query, con = con)
+
+```
+
+```{python}
+
+iod19_msoa = iod19.copy()
+
+iod19_msoa = iod19_msoa.merge(lookup11, how='left', on='lsoa11cd')    
+
+cols = iod19_msoa.columns[iod19_msoa.columns.str.contains('score')]
+
+# Note - denominator may need to be different for particular domains
+# Create a dictionary to index the correct population column
+# These are metrics with specific denominators
+special_cols = [
+    'income_deprivation_affecting_children_index_idaci_score_rate',
+    'income_deprivation_affecting_older_people_idaopi_score_rate',
+    'employment_score_rate'
+]
+
+# These are the metrics with the general pop denominator
+normal_cols = [col for col in cols if col not in special_cols]
+
+# Map the special metrics to specific denoms
+pop_dict = {
+    'income_deprivation_affecting_children_index_idaci_score_rate': 'dependent_children_aged_0_15_mid_2015_excluding_prisoners',
+    'income_deprivation_affecting_older_people_idaopi_score_rate': 'older_population_aged_60_and_over_mid_2015_excluding_prisoners',
+    'employment_score_rate': 'working_age_population_18_59_64_for_use_with_employment_deprivation_domain_excluding_prisoners'
+}
+
+# Map the normal metrics to the total pop denom
+temp_dict = {col: 'total_population_mid_2015_excluding_prisoners' for col in normal_cols}
+
+# Add the two dicts
+pop_dict.update(temp_dict)
+
+# Multiply each score by population
+for col in cols:
+    population_col = pop_dict[col]
+    # print(col + ': ' + population_col)
+    # print(iod19[population_col])
+    iod19_msoa[col + '_weighted'] = iod19_msoa[col] * iod19_msoa[population_col]
+
+# Group by MSOA and sum the weighted scores and population
+grouped = iod19_msoa.groupby(['msoa11cd','lad19cd','lad19nm']).agg(
+    {col + '_weighted': 'sum' for col in cols} |
+    {'total_population_mid_2015_excluding_prisoners': 'sum',
+    'dependent_children_aged_0_15_mid_2015_excluding_prisoners': 'sum',
+    'older_population_aged_60_and_over_mid_2015_excluding_prisoners': 'sum',
+    'working_age_population_18_59_64_for_use_with_employment_deprivation_domain_excluding_prisoners': 'sum'}
+).reset_index()
+
+# Calculate weighted average, rank, and decile
+for col in cols:
+    avg_col = col + '_weighted_avg'
+    rank_col = col + '_rank'
+    decile_col = col + '_decile'
+    population_col = pop_dict[col]
+
+    # print(col + ': ' + population_col)
+    # print(grouped[population_col])
+
+    grouped[avg_col] = grouped[col + '_weighted'] / grouped[population_col]
+    grouped[rank_col] = grouped[avg_col].rank(method='min', ascending=False)
+    grouped[decile_col] = pd.qcut(grouped[rank_col], q=10, labels=range(1, 11), duplicates='drop')
+
+# Select final columns to keep
+iod19_msoa = grouped[['msoa11cd','lad19cd','lad19nm'] + 
+                   [col + suffix for col in cols for suffix in ['_weighted_avg', '_rank', '_decile']]]
+
+
+```
+
+```{python}
+# aquick sanity check that ranks are lower for higher scores
+test_cols = [col for col in iod25_msoa.columns if 'index_of_multiple_deprivation_imd' in col]
+test = iod25_msoa[['msoa21cd'] + test_cols]
+test.sort_values([col for col in test.columns if 'weighted_avg' in col])
+```
+
+```{python}
+# Get decile boundaries based on all data
+
+rank_cols = [
+    col for col in iod25_msoa.columns
+    if 'rank' in col
+    and any(domain in col for domain in domains_of_interest)
+]
+
+# Get ranks
+max_rank = int(iod25_msoa[rank_cols].max().max())
+
+# Get the bin edges for deciles
+# Create all ranks obejct
+all_ranks = range(1,max_rank+1) 
+total_ranks = len(all_ranks)
+
+# Calculate decile boundaries (every 10%)
+decile_boundaries = []
+for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
+    boundary_index = int(i * total_ranks / 10)
+    decile_boundaries.append(all_ranks[boundary_index])
+
+# Add in the last edge
+decile_boundaries.append(max(all_ranks))
+
+# is it the same for 2019?
+# Get decile boundaries based on all data
+
+rank_cols = [
+    col for col in iod25_msoa.columns
+    if 'rank' in col
+    and any(domain in col for domain in domains_of_interest)
+]
+
+# Get ranks
+max_rank = int(iod19_msoa[rank_cols].max().max())
+
+# Get the bin edges for deciles
+# Create all ranks obejct
+all_ranks = range(1,max_rank+1) 
+total_ranks = len(all_ranks)
+
+# Calculate decile boundaries (every 10%)
+decile_boundaries19 = []
+for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
+    boundary_index = int(i * total_ranks / 10)
+    decile_boundaries19.append(all_ranks[boundary_index])
+
+# Add in the last edge
+decile_boundaries19.append(max(all_ranks))
+
+```
+
+
+
+## Combine for Haringey
+
+
+```{python}
+haringey19 = iod19_msoa.loc[iod19_msoa['lad19nm'] == 'Haringey']
+haringey25 = iod25_msoa.loc[iod25_msoa['lad24nm'] == 'Haringey']
+
+haringey19['year'] = 2019
+haringey25['year'] = 2025
+
+
+```
+
+
+```{python}
+# get msoa11 to msoa21 lookup
+def fetch_data(base_url, where_clause, result_offset, max_records):
+    params = {
+        "where": where_clause,       # Retrieve all records
+        "outFields": "*",            # "*" specifies all fields
+        "f": "json",
+        "resultOffset": result_offset,   # For pagination
+        "resultRecordCount": max_records
+    }
+
+    # Make request
+    response = requests.get(base_url, params=params)
+    content_bytes = response.content
+
+    # Check for 504 error in body if response seems suspiciously short
+    error_504 = False
+    if len(content_bytes) < 1000:
+        peek_content = response.text
+        if "error" in peek_content.lower() and "504" in peek_content:
+            error_504 = True
+        else:
+            error_504 = False
+
+    # Handle response status and embedded 504
+    if response.status_code == 200 and not error_504:
+        return response
+        # Optionally: return response.text  # if you want to return the content
+    else:
+        raise Exception(f"Error: Status code {response.status_code} (body may contain 504)")
+
+filepath = os.path.join(data_dir, 'msoa_lookup.csv')
+# Get GeoJSON text content from the response
+if os.path.isfile(filepath)==False:
+
+    url = 'https://services1.arcgis.com/ESMARspQHYMw9BZ9/arcgis/rest/services/MSOA11_MSOA21_LAD22_EW_LU_v2/FeatureServer/0/query'
+
+    target_variable = 'LAD22NM'
+
+    areas = ['Haringey']
+
+    where_clause = f"{target_variable} IN ('" + "', '".join(areas) + "')"
+
+    response = fetch_data(
+        base_url=url,
+        where_clause=where_clause, 
+        result_offset=0, 
+        max_records=2000)
+
+    # Get GeoJSON text content from the response
+    response_json = response.json()
+
+    records = [f["attributes"] for f in response_json["features"]]
+    msoa_lookup = pd.DataFrame(records)
+    msoa_lookup.to_csv(filepath)
+else:
+    print('Data already acquired. Loading it.')
+
+msoa_lookup = pd.read_csv(filepath)
+
+msoa_lookup = janitor.clean_names(msoa_lookup)
+#
+# msoa_lookup = pd.read_csv(io.StringIO(msoa_lookup))
+
+```
+
+```{python}
+haringey19 = haringey19.merge(msoa_lookup[['msoa11cd','msoa21cd']], how='left', on='msoa11cd')
+
+# Check whether msoa11cds are eqaul to msoa21cds. they are. that makes things simpler
+sum(haringey19['msoa11cd'] == haringey19['msoa21cd'])
+```
+
+
+```{python}
+# Select subset of domains so plot isn't information overload
+# domains_of_interest = [
+#     'income',
+#     'employment',
+#     'education_skills_and_training',
+#     'health_deprivation_and_disability',
+#     'crime',
+#     'barriers_to_housing_and_services',
+#     'living_environment',
+#     'income_deprivation_affecting_children',
+#     'income_deprivation_affecting_older_people'
+# ]
+
+# Reorder columns
+rank_cols = [
+    col for col in haringey19.columns
+    if 'rank' in col
+    and any(domain in col for domain in domains_of_interest)
+]
+
+
+haringey19_ranks = haringey19[['msoa21cd','lad19nm'] + rank_cols]
+
+
+# haringey_ranks = haringey19_ranks[haringey19_ranks['lad21nm']=='Haringey']
+
+# Pivot longer
+haringey19_ranks_long = haringey19_ranks.melt(
+    id_vars = 'msoa21cd',
+    value_vars = rank_cols,
+    var_name = 'domain',
+    value_name = 'rank')
+
+# Clean up domain names (remove '_rank' suffix)
+haringey19_ranks_long['domain'] = haringey19_ranks_long['domain'].str.replace('_score_rate_rank', '')
+haringey19_ranks_long['domain'] = haringey19_ranks_long['domain'].str.replace('_score_rank', '')
+domains_of_interest = haringey19_ranks_long['domain'].unique()
+def clean_domain_name(domain):
+    domain_clean  = domain.replace('_', ' ').title()
+    domain_clean = domain_clean.replace(' Imd', '')
+    domain_clean = domain_clean.replace(' Idaopi', '')
+    domain_clean = domain_clean.replace(' Index Idaci', '')
+
+    return domain_clean
+domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
+# Apply the mapping to the dataframe
+haringey19_ranks_long['clean_domain'] = haringey19_ranks_long['domain'].map(domain_dict)
+
+
+# 2025
+
+haringey25_ranks = haringey25[['msoa21cd','lad24nm'] + rank_cols]
+
+# Process 2025 in the same way as 2019
+haringey25_ranks_long = haringey25_ranks.melt(
+    id_vars='msoa21cd',
+    value_vars=rank_cols,  # must match — if columns differ, we sync names first
+    var_name='domain',
+    value_name='rank'
+)
+
+# Same domain cleaning applied to 2025
+haringey25_ranks_long['domain'] = haringey25_ranks_long['domain'].str.replace('_score_rate_rank', '')
+haringey25_ranks_long['domain'] = haringey25_ranks_long['domain'].str.replace('_score_rank', '')
+domains_of_interest = haringey25_ranks_long['domain'].unique()
+domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
+# Apply the mapping to the dataframe
+haringey25_ranks_long['clean_domain'] = haringey25_ranks_long['domain'].map(domain_dict)
+
+def clean_domain_name(domain):
+    return domain.replace('_', ' ').title()
+# Add year column
+haringey19_ranks_long['year'] = 2019
+haringey25_ranks_long['year'] = 2025
+
+imd_long = pd.concat([haringey19_ranks_long, haringey25_ranks_long], ignore_index=True)
+
+```
+
+```{python}
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+np_data = imd_long[imd_long['msoa21cd'].isin(np_msoas)].copy()
+
+# Pivot so we have a 2019 and 2025 column
+np_paired = np_data.pivot_table(
+    index='clean_domain',
+    columns='year',
+    values='rank'
+).reset_index()
+
+clean_domains = np_paired['clean_domain'].unique()
+order = [
+    'Index Of Multiple Deprivation', 
+    'Income',
+    'Income Deprivation Affecting Children',
+    'Income Deprivation Affecting Older People',
+    'Employment',
+    'Education Skills And Training',
+    'Health Deprivation And Disability',
+    'Crime',
+    'Barriers To Housing And Services',
+    'Living Environment'
+    ]
+
+np_paired['clean_domain'] = pd.Categorical(
+    np_paired['clean_domain'],
+    categories=order,
+    ordered=True
+)
+
+np_paired = np_paired.sort_values('clean_domain', ascending=False)
+
+fig, ax = plt.subplots(figsize=(8,8))
+# plt.figure(figsize=(10, 8))
+
+for _, row in np_paired.iterrows():
+    
+    # Draw connecting line
+    ax.plot(
+        [row[2019], row[2025]],
+        [row['clean_domain'], row['clean_domain']],
+        color='gray', linewidth=1.5,
+        zorder=1
+    )
+
+    # 2019 point
+    ax.scatter(
+        row[2019],
+        row['clean_domain'],
+        color=jk_colours[0],
+        s=60,
+        label='2019' if _ == 0 else "",
+        zorder=3
+    )
+    
+    # 2025 point
+    ax.scatter(
+        row[2025],
+        row['clean_domain'],
+        color=jk_colours[2],
+        s=60,
+        label='2025' if _ == 0 else "",
+        zorder=3
+    )
+ 
+max_x = ax.get_xlim()[1]
+decile_boundaries2 = [x for x in decile_boundaries if x < max_x]
+decile_boundaries3 = [x for x in decile_boundaries19 if x < max_x]
+decile_label_ypos_pad = 1.04
+
+# Add vertical lines for decile boundaries
+for i, boundary in enumerate(decile_boundaries3):
+    ax.axvline(
+        x=boundary, 
+        color=jk_colours[0], 
+        # linestyle=(0, (5, 10)), 
+        linestyle='dotted', 
+        alpha=0.7,
+        label='2019' if i == 0 else "")
+    if i < 10:
+        x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
+        ax.text(x=x_loc, y=ax.get_ylim()[1]*decile_label_ypos_pad, s=i+1, ha='center')
+
+# Add vertical lines for decile boundaries
+for i, boundary in enumerate(decile_boundaries2):
+    ax.axvline(
+        x=boundary, 
+        color=jk_colours[2], 
+        # linestyle=(0, (5, 10)), 
+        linestyle='dotted', 
+        alpha=0.7,
+        label='2025' if i == 0 else "")
+    if i < 10:
+        x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
+        ax.text(x=x_loc, y=ax.get_ylim()[1]*decile_label_ypos_pad, s=i+1, ha='center')
+
+ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[1]*decile_label_ypos_pad, s='Decile', ha='right')
+ax.set_xlabel('IMD Rank (1 = most deprived)')
+ax.annotate(
+    'Dotted vertical lines indicate decile boundaries for 2019 (teal) and 2025 (orange)',                          # the text
+    xy=(0.99, -0.18),                 # near right, slightly below axis
+    xycoords='axes fraction',        # coordinates relative to axes (0-1)
+    ha='right',
+    va='top',
+    fontsize=10
+)
+# ax.set_ylabel('Domain')
+# ax.set_title('IMD Comparison for Northumberland Park: 2019 vs 2025')
+ax.legend(title="Year")
+plt.show()
+
+fig.savefig(os.path.join('..','outputs','np_imd_change_19_25.png'), dpi=300, bbox_inches='tight')
+
+```
+
