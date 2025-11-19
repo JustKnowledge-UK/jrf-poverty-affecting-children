@@ -452,7 +452,7 @@ for stadium in stadia['Stadium'].unique():
     stadium_workers['location'] = np.select(conditions, choices, default="Beyond 1km")
 
     stadium_workers['stadium'] = stadium
-    residence_counts = stadium_workers.groupby(['stadium','location'])['count'].sum().reset_index()
+    residence_counts = stadium_workers.groupby(['stadium','location','place_of_work_indicator_label'])['count'].sum().reset_index()
     residence_counts['percentage'] = residence_counts['count'].div(residence_counts['count'].sum()).mul(100)
     residence_counts['log_percentage'] = np.log(residence_counts['percentage'])
     
@@ -470,22 +470,22 @@ all_results = pd.concat(results).reset_index(drop=True)
 # Plot
 import seaborn as sns
 
-custom_order = ['Stadium','Within 1km', 'Beyond 1km']
+# custom_order = ['Stadium','Within 1km', 'Beyond 1km']
 
-fig, ax = plt.subplots(figsize=(8, 8))
+# fig, ax = plt.subplots(figsize=(8, 8))
 
-sns.barplot(
-    data=all_results, 
-    x='percentage', 
-    y='stadium', 
-    hue='location', 
-    hue_order=custom_order,
-    ax=ax)
+# sns.barplot(
+#     data=all_results, 
+#     x='percentage', 
+#     y='stadium', 
+#     hue='location', 
+#     hue_order=custom_order,
+#     ax=ax)
 
-# Optional: rotate x-axis labels if they overlap
-ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
+# # Optional: rotate x-axis labels if they overlap
+# ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha='right')
 
-plt.tight_layout()
+# plt.tight_layout()
 plt.show()
 
 # Just London
@@ -517,4 +517,61 @@ plt.show()
 
 
 fig.savefig(os.path.join('..','outputs','session3','stadium_employment.png'), dpi=300, bbox_inches='tight')
+```
+
+
+```{python}
+
+custom_order = ['Stadium','Within 1km', 'Beyond 1km']
+
+fig, ax = plt.subplots(figsize=(8, 10))
+
+london1 = all_results.loc[(all_results['region']=='London') & all_results['place_of_work_indicator_label'].str.contains('Mainly working at or from home')]
+
+sns.barplot(
+    data=london1, 
+    x='percentage', 
+    y='stadium', 
+    hue='location',
+    palette=jk_colours,
+    hue_order=custom_order,
+    ax=ax)
+
+ 
+ax.set_xlabel('Percentage')
+ax.set_ylabel('')
+ax.legend().set_title('')
+ax.set_title(london1['place_of_work_indicator_label'].unique()[0])
+# fig.suptitle('Where workers in a stadium MSOA live')
+
+# plt.tight_layout()
+plt.show()
+
+fig, ax = plt.subplots(figsize=(8, 10))
+
+london2 = all_results.loc[(all_results['region']=='London') & all_results['place_of_work_indicator_label'].str.contains('not working at or from home')]
+
+sns.barplot(
+    data=london2, 
+    x='percentage', 
+    y='stadium', 
+    hue='location',
+    palette=jk_colours,
+    hue_order=custom_order,
+    ax=ax)
+
+ 
+ax.set_xlabel('Percentage')
+ax.set_ylabel('')
+ax.legend().set_title('')
+ax.set_title(london2['place_of_work_indicator_label'].unique()[0])
+# fig.suptitle('Where workers in a stadium MSOA live')
+
+# plt.tight_layout()
+plt.show()
+
+
+
+
+# fig.savefig(os.path.join('..','outputs','session3','stadium_employment.png'), dpi=300, bbox_inches='tight')
 ```
