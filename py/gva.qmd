@@ -990,3 +990,34 @@ ax1.set_axis_off()
 fig.savefig(os.path.join('..','outputs','ths_1km_msoas.png'), dpi=300, bbox_inches='tight')
 
 ```
+
+# plot the stadium next to np
+
+
+```{python}
+np = intersecting_msoas_gdf.loc[intersecting_msoas_gdf['msoa11cd']=='E02000398']
+fig, ax1 = plt.subplots(figsize=(8,8))
+np.boundary.plot(ax=ax1, edgecolor=jk_colours[0])
+
+tott.plot(ax=ax1, marker='o', color=jk_colours[0], markersize=30)
+
+# for idx,row in intersecting_msoas_gdf.iterrows():
+#     geom = row['geometry']
+#     centroid = geom.centroid
+#     x, y = centroid.x, centroid.y
+
+#     ax1.annotate(xy=(x,y), text=row['msoa11cd'], fontsize=10, ha='center')
+cx.add_basemap(ax=ax1, crs=np.crs, source=cx.providers.OpenStreetMap.Mapnik)
+ax1.annotate(
+    xy=(0.99, -0.03),                
+    xycoords='axes fraction',   
+    text=f'Bordered area is Northumberland Park (MSOA)\nTeal dot indicates location of Tottenham Hotspur Stadium',
+    va='top',
+    ha='right',
+    size=10
+)
+
+ax1.set_axis_off()
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+fig.savefig(os.path.join('..','outputs','ths_np.png'), dpi=300, bbox_inches='tight')
+```
