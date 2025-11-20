@@ -13,7 +13,7 @@ The analysis code can be found in the `py` folder. Below is a breakdown of what 
 
 - `CLIF_graph.qmd`: Line graph of children in low income families in the UK, Haringey and Northumberland Park over time
 - `business.qmd`: An exploration of spending in businesses in the Tottenham Hotspur area (not used in the final report)
-- `children_in_low_income_families.qmd`:
+- `children_in_low_income_families.qmd`: Initial exploration of children in low income families data (not used in the final report)
 - `ethnicity-np.qmd`: Ethnicity breakdown for Northumberland Park
 - `gva.qmd`: Analysis of Gross Value Added in Tottenham Hotspur Area
 - `haringey_cilif.qmd`: Spatial analysis of children in low income families in Haringey
