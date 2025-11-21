@@ -504,12 +504,14 @@ The persistence of poverty affecting children in places like Northumberland Park
 
 # Appendices
 
+{% raw %}
 \newcommand{\changelocaltocdepth}[1]{%
   \addtocontents{toc}{\protect\setcounter{tocdepth}{#1}}%
   \setcounter{tocdepth}{#1}%
 }
 
 \changelocaltocdepth{0}
+{% endraw %}
 
 # Appendix 1 {#appendix-1}
 
