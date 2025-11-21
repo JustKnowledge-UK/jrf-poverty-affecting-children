@@ -1,8 +1,22 @@
 ---
-title: "Untitled"
-format: html
+title: "Ethnicity breakdown of Northumberland Park"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+execute: 
+  warning: false
+  message: false
 ---
 
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
+
+This script acquires and processes data on ethnicity and age of arrival for Northumberland Park
 
 ```{python}
 import os 
@@ -22,6 +36,7 @@ plt.rcParams['font.family'] = 'Open Sans'
 plt.rcParams['font.size'] = 16    # size of the title
 ```
 
+Acquire the data from NOMIS
 
 ```{python}
 # Endpoint
@@ -73,6 +88,7 @@ data['percent'] = data['obs_value'].div(data['obs_value'].sum()) * 100
 data = data.sort_values(by='percent')
 ```
 
+Plot ethnicity breakdown for NP
 
 ```{python}
 fig, ax = plt.subplots(figsize=(10,10))
@@ -139,6 +155,8 @@ fig.savefig(os.path.join('..','outputs','np-ethnicity.png'), dpi=300, bbox_inche
 
 # Age of arrival
 
+Here we just want to find out what percentage of residents in Northumberland Park were born/not born in the UK.
+
 ```{python}
 base = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2038_1.data.csv?'
 
@@ -170,4 +188,5 @@ aof_data = aof_data[cols]
 aof_data = aof_data.loc[aof_data['c2021_agearruk_18_code'].isin(['_1','1001'])]
 aof_data['percentage'] = aof_data['obs_value'].div(aof_data['obs_value'].sum()) * 100
 
+print(aof_data)
 ```
