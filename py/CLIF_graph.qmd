@@ -1,8 +1,21 @@
 ---
-title: "Untitled"
-format: html
+title: "Children in Low Income Families"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+execute: 
+  warning: false
+  message: false
 ---
 
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
+This script acquires and processes Children in Low Income Families data to produce a line graph of children in low income families in the UK, Haringey and Northumberland Park over time
 
 ```{python}
 import os
@@ -82,12 +95,7 @@ for i in range(2014, 2023):
 
 ```{python}
 # The graph itself
-
-# sns.set_theme()
-# sns.set_context()
-# sns.set_style("whitegrid")
-
-fig, ax = plt.subplots(figsize=(8, 5), dpi=800)
+fig, ax = plt.subplots(figsize=(8, 5))
 
 # Add lines for UK, Haringey and Northumberland Park respectively.
 sns.lineplot(x=list(range(2014, 2023)), y=uk_pc_low_income[0], lw=5, ax=ax, label='Line A', legend=False, color=jk_colours[0])
@@ -115,9 +123,6 @@ plt.xticks(fontsize=12)
 # plt.xticks(rotation=20)  # Optional: rotate labels for readability
 plt.tick_params(axis='x', bottom=True)
 plt.tick_params(axis='y', left=True)
-# Add lines.
-# line = ax.lines[0]
-# line.set_solid_capstyle('round')
 
 # plt.title("Percentage of Children in Low Income Families", size=14)
 plt.show()
