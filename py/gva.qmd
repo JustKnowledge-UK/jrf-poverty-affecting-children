@@ -4,10 +4,10 @@ format:
     html:
         code-fold: true
         css: ../styles.css
+        embed-resources: true
 execute: 
   warning: false
   message: false
-logo: ../assets/logo_transparent.png
 ---
 
 <div class="top-left-logo">

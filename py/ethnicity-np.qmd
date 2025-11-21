@@ -4,6 +4,7 @@ format:
     html:
         code-fold: true
         css: ../styles.css
+        embed-resources: true
 execute: 
   warning: false
   message: false
