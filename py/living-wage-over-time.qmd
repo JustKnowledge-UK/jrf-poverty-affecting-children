@@ -1,7 +1,22 @@
 ---
-title: "Untitled"
-format: html
+title: "Living Wage over time"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+        embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
+
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
+This script plots Living Wage data from 2015 and 2025 for the UK, London, Haringey, and Tottenham (Parliamentary Constituency)
 
 ```{python}
 import os
@@ -18,12 +33,11 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 
 plt.rcParams['font.family'] = 'Open Sans'   
 plt.rcParams['font.size'] = 16    # size of the title
-```
 
-```{python}
 data_dir = os.path.join('..', 'data')
-
 ```
+
+Load and tidy the data
 
 ```{python}
 urls = {
@@ -110,10 +124,9 @@ col_order = ['year'] + [col for col in all_data.columns if col != 'year']
 all_data = all_data[col_order]
 ```
 
+Plot
 
 ```{python}
-
-
 plt.figure(figsize=(10,6))
 sns.lineplot(
     data=all_data, 
