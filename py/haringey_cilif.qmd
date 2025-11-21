@@ -1,11 +1,22 @@
 ---
 title: "Children in Low Income Families: Haringey and surrounding areas"
-author: Jolyon Miles-Wilson
-date: 2025-07-01
-format: html
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+        embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
 
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
 
+This script visualises Children in Low Income Families for small areas in Haringey.
 
 ```{python}
 # Packages and config
@@ -34,11 +45,21 @@ import io
 from matplotlib.colors import TwoSlopeNorm, LinearSegmentedColormap
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 import matplotlib.colors as mcolors
+from sqlalchemy import create_engine
 
+# Load DB config
 config = configparser.ConfigParser()
 config.read(os.path.join('..', 'db_config.ini'))
-
 db_params = dict(config['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str = (
+    f"postgresql+psycopg2://{db_params['user']}:{db_params['password']}"
+    f"@{db_params['host']}:{db_params['port']}/{db_params['database']}"
+)
+
+# Create engine
+engine = create_engine(conn_str)
 
 with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
     jk_colours = [line.strip() for line in file]
@@ -52,71 +73,117 @@ ice_cmap_rev = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reve
 
 plt.rcParams['font.family'] = 'Open Sans'   
 plt.rcParams['font.size'] = 16    # size of the title
-```
 
+data_dir = os.path.join('..','data')
 
-```{python}
-# Data from databases (will need to be disambiguated for reprod.)
-
-with psycopg2.connect(**db_params) as con:
-    # East Coast Mainline geometry for the rail diving East-West Haringey
-    query = '''SELECT *
-                FROM east_coast_mainline_geometry
-                '''
-
-    trainline = gpd.read_postgis(query, con = con, geom_col='geometry')
-
-    # LAD boundaries for cutting the rail
-    query2 = '''SELECT lad21nm, geometry 
-                FROM lad21_boundaries 
-                WHERE lad21nm = 'Haringey'
-            '''
-    haringey_gpd = gpd.read_postgis(query2, con = con, geom_col='geometry')
-
-    # Get MSOA boudnaries for areas of interest for plotting CILIF data - we include Enfield and Waltham Forest becuase they're neighbours to Northumberland Park
-    lads = ['Haringey','Enfield','Waltham Forest']
-    formatted_list = ', '.join([f"'{lad}'" for lad in lads])
-    query4 = f'''
-            SELECT foo.* 
-            FROM msoa21_boundaries AS foo
-            RIGHT JOIN (
-                SELECT DISTINCT msoa21cd
-                FROM pcode_census21_lookup 
-                WHERE ladnm IN ({formatted_list})
-            ) AS loo
-            ON foo.msoa21cd = loo.msoa21cd
-
-             '''
-    msoa_gdf = gpd.read_postgis(con=con, sql=query4, geom_col='geometry')
-
-    # Get London msoas for subsetting data
-    query = '''
-            SELECT DISTINCT foo.msoa21cd
-            FROM pcode_census21_lookup foo
-            LEFT JOIN lad21_lookup loo
-            ON foo.ladnm = loo.lad21nm
-            WHERE loo.rgn21nm = 'London'
-            '''
-            
-    london_msoas = pd.read_sql(con=con, sql=query)
-    london_msoas = london_msoas['msoa21cd'].unique().tolist()
-
-    # Get just Haringey MSOAs
-    query = '''
-            SELECT DISTINCT msoa21cd 
-            FROM pcode_census21_lookup
-            WHERE ladnm = 'Haringey'
-            '''
-    haringey_msoas = pd.read_sql_query(query, con)['msoa21cd'].tolist()
 ```
 
 # Data
 
-## Children in Low Income Families
+Get geometry data required
+
+```{python}
+filepath = os.path.join(data_dir, 'ecm_trainline.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        # East Coast Mainline geometry for the rail diving East-West Haringey
+        query = '''SELECT *
+                    FROM east_coast_mainline_geometry
+                    '''
+
+        trainline = gpd.read_postgis(query, con = con, geom_col='geometry')
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(trainline, file)
+else:
+    with open(filepath, 'rb') as file:
+        trainline = pickle.load(file)
+
+filepath = os.path.join(data_dir, 'haringey_gpd.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        # LAD boundaries for cutting the rail
+        query2 = '''SELECT lad21nm, geometry 
+                    FROM lad21_boundaries 
+                    WHERE lad21nm = 'Haringey'
+                '''
+        haringey_gpd = gpd.read_postgis(query2, con = con, geom_col='geometry')
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(haringey_gpd, file)
+else:
+    with open(filepath, 'rb') as file:
+        haringey_gpd = pickle.load(file)
+
+filepath = os.path.join(data_dir, 'msoa_gdf_haringey-cilif.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        # Get MSOA boudnaries for areas of interest for plotting CILIF data - we include Enfield and Waltham Forest becuase they're neighbours to Northumberland Park
+        lads = ['Haringey','Enfield','Waltham Forest']
+        formatted_list = ', '.join([f"'{lad}'" for lad in lads])
+        query4 = f'''
+                SELECT foo.* 
+                FROM msoa21_boundaries AS foo
+                RIGHT JOIN (
+                    SELECT DISTINCT msoa21cd
+                    FROM pcode_census21_lookup 
+                    WHERE ladnm IN ({formatted_list})
+                ) AS loo
+                ON foo.msoa21cd = loo.msoa21cd
+
+                '''
+        msoa_gdf = gpd.read_postgis(con=con, sql=query4, geom_col='geometry')
+
+        with open(filepath, 'wb') as file:
+                pickle.dump(msoa_gdf, file)
+else:
+    with open(filepath, 'rb') as file:
+        msoa_gdf = pickle.load(file)
+
+filepath = os.path.join(data_dir, 'london_msoas.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        # Get London msoas for subsetting data
+        query = '''
+                SELECT DISTINCT foo.msoa21cd
+                FROM pcode_census21_lookup foo
+                LEFT JOIN lad21_lookup loo
+                ON foo.ladnm = loo.lad21nm
+                WHERE loo.rgn21nm = 'London'
+                '''
+                
+        london_msoas = pd.read_sql(con=con, sql=query)
+        london_msoas = london_msoas['msoa21cd'].unique().tolist()
+
+        with open(filepath, 'wb') as file:
+                pickle.dump(london_msoas, file)
+else:
+    with open(filepath, 'rb') as file:
+        london_msoas = pickle.load(file)
+
+filepath = os.path.join(data_dir, 'haringey_msoas_haringey-cilif.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        # Get just Haringey MSOAs
+        query = '''
+                SELECT DISTINCT msoa21cd 
+                FROM pcode_census21_lookup
+                WHERE ladnm = 'Haringey'
+                '''
+        haringey_msoas = pd.read_sql_query(query, con)['msoa21cd'].tolist()
+
+        with open(filepath, 'wb') as file:
+                pickle.dump(haringey_msoas, file)
+else:
+    with open(filepath, 'rb') as file:
+        haringey_msoas = pickle.load(file)
+```
+
 
 Now bring in the CILIF data. 
 
 This was downloaded as .csv from https://stat-xplore.dwp.gov.uk/webapi/jsf/login.xhtml > Children in Low Income Families - Relative Low Income. The following selections were made:
+
 - All MSOAs in London as ROWS (MSOA codes, not names, were selected)
 - Single year of age up to and including 15 years as ROWS
 - Years 2014/15 to 2023/24 as COLUMNS
@@ -149,7 +216,7 @@ cilif_london_long = janitor.clean_names(cilif_london_long)
 cilif_london_long['value'] = cilif_london_long['value'].astype(int)
 ```
 
-## Population estimates
+Now get population estimates for denominators
 
 ```{python}
 # Get population estimates via NOMIS API
@@ -230,9 +297,6 @@ ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
 ecm = ecm.to_crs(haringey_gpd.crs)
 ecm_clipped = gpd.clip(ecm, haringey_gpd)
 
-```
-
-```{python}
 # Get northumberland park centroid for plotting label
 np = cilif_gdf.loc[cilif_gdf['msoa21cd']=='E02000398']
 np['centroid'] = np.geometry.centroid
@@ -355,9 +419,11 @@ plt.show()
 
 ```
 
-```{python}
-# split the msoas based on the ecm
+# Explore East-West division
 
+Split the msoas based on the ECM
+
+```{python}
 centroids = cilif_gdf.copy()
 centroids["geometry"] = cilif_gdf.geometry.centroid
 
@@ -398,13 +464,6 @@ west_gdf = bounds.copy()
 # west_gdf = west_gdf.loc[west_gdf['min_easting'] <= max_easting]
 west_gdf = west_gdf.loc[(west_gdf['min_easting'] <= max_easting) & (west_gdf['max_easting'] <= max_easting2)]
 
-
-fig, ax = plt.subplots()
-west_gdf.plot(ax=ax)
-for idx, row in west_gdf.iterrows():
-    x, y = row.geometry.centroid.coords[0]
-    ax.text(x, y, row['msoa21cd'], fontsize=6, ha='center', va='center')
-
 west_gdf = west_gdf.loc[~west_gdf['msoa21cd'].isin(east_msoas + ['E02000397', 'E02000403'])]
 
 fig, ax = plt.subplots()
@@ -425,14 +484,20 @@ for idx, row in east_gdf.iterrows():
 
 ```
 
+Now summarise for east vs west
+
 ```{python}
 # now we can quantify the cilif for east and west
 average_cilif_west = west_gdf['percentage'].mean()
 average_cilif_east = east_gdf['percentage'].mean()
 
-print(round(average_cilif_west,0))
-print(round(average_cilif_east,0))
+print('west average: ' + str(round(average_cilif_west,0)))
+print('east average: ' + str(round(average_cilif_east,0)))
+```
 
+Check we've got all the MSOAs. Should equal 36
+
+```{python}
 # check i've got all the msoas
 all_east_msoas = east_gdf['msoa21cd'].unique().tolist()
 
@@ -457,9 +522,7 @@ touching = gpd.sjoin(msoa_gdf, np_gdf, predicate='touches')
 touching = touching[touching['msoa21cd_left'] != 'E02000398']
 
 areas_to_add = touching['msoa21cd_left'].unique().tolist()
-```
 
-```{python}
 # Calculate the difference in decile between 2014 and 2023
 # Add in areas of Enfield and Waltham Forest
 msoas_list = haringey_msoas + areas_to_add
@@ -513,7 +576,7 @@ x, y = np['centroid'].iloc[0].x, np['centroid'].iloc[0].y
 np_decile_change = np['decile_2023'].astype(int).iloc[0]
 ax.text(x=x, y=y, s=f'NP\nDecile: {np_decile_change}', ha='center', size=8, color='white')
 
-fig.savefig(os.path.join('..','outputs','cilif_haringey_decile_2023.png'), dpi=600)
+fig.savefig(os.path.join('..','outputs','cilif_haringey_decile_2023.png'), dpi=300)
 ```
 
 ## Children in Low Income Families - Decile change 2014-2023
@@ -572,5 +635,5 @@ np_decile_change = np['decile_diff'].astype(int).iloc[0]
 ax.text(x=x, y=y, s=f'NP\nDecile change: {np_decile_change}', ha='center', size=8)
 
 
-fig.savefig(os.path.join('..','outputs','cilif_haringey_change_2014-23.png'), dpi=600)
+fig.savefig(os.path.join('..','outputs','cilif_haringey_change_2014-23.png'), dpi=300)
 ```
