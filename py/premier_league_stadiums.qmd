@@ -1,9 +1,20 @@
 ---
 title: "Premier League Stadia and Poverty"
-author: Jolyon Miles-Wilson
-date: 2025-07-01
-format: html
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+        embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
+
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
 
 This script scrapes a table of Premier League Stadium locations from Wikipedia and joins it with Children in Low Income Families data to explore poverty in the vicinity of stadia across the country.
 
@@ -316,7 +327,7 @@ else:
 
 ```
 
-# Plot
+# Plot UK premier league stadia on a map
 
 The plot below shows the Premier League Stadia listed on Wikipedia
 
@@ -350,6 +361,8 @@ cx.add_basemap(ax, crs = stadiums_gdf.crs, source=cx.providers.OpenStreetMap.Map
 plt.tight_layout()
 plt.show()
 ```
+
+Plot just Tottenham stadium
 
 ```{python}
 tott = stadiums_gdf.loc[stadiums_gdf['Stadium'] == 'Tottenham Hotspur Stadium']
@@ -451,6 +464,8 @@ joined.to_pickle(os.path.join('..','data','stadium_locations.pkl'))
 
 # Finding nearest neighbours
 
+Identify neighbours by creating a 1km buffer around each stadium
+
 ```{python}
 # Get point coordinates (n_targets x 2)
 target_coords = np.array([[geom.x, geom.y] for geom in joined.geometry])
@@ -485,6 +500,7 @@ for i, row in joined.iterrows():
     })
 ```
 
+Build a mapping from MSOA to associated stadium(s)
 
 ```{python}
 from collections import defaultdict
@@ -514,22 +530,6 @@ neighbors_gdf = msoa_gdf.merge(msoa_stadium_df, on='msoa21cd', how='inner')
 neighbors_gdf.to_pickle(os.path.join('..','data','stadium_neighbours.pkl'))
 ```
 
-Plot Haringey to check how the neighbour identification has gone
-
-```{python}
-tott = stadiums_gdf.loc[stadiums_gdf['Stadium'] == 'Tottenham Hotspur Stadium']
-# Plot Haringey to check
-haringey = neighbors_gdf.loc[neighbors_gdf['stadium'].str.contains('Tottenham')]
-tott = tott.to_crs(epsg=27700)
-
-fig, ax = plt.subplots(figsize=[8,8])
-
-haringey.plot(ax=ax, alpha=0.5, edgecolor="black")
-tott.plot(ax=ax, marker='o', color='red', markersize=50, alpha=0.7)
-cx.add_basemap(ax, crs = tott.crs, source=cx.providers.OpenStreetMap.Mapnik)
-
-```
-
 # Child poverty data
 
 ```{python}
@@ -548,62 +548,9 @@ absolute = absolute.iloc[:,[1,3]]
 absolute.columns = ['msoa_name','count']
 ```
 
-
+# Population estimates
 
 Get population estimates for under 16s in small areas. NOMIS API request would be preferable but there are issues with joining alter with this approach. In lieu I've used the census bulk downloads, Table 007 from https://www.nomisweb.co.uk/sources/census_2021_bulk
-
-```{python}
-# Get population estimates via NOMIS API
-# file = os.path.join('..','data', 'london_population_msoa.pkl')
-# if os.path.isfile(file)==False:   
-#     # Build the query
-#     base = "https://www.nomisweb.co.uk/api/v01/dataset/NM_2014_1.csv?"
-#     date = "date=latest"
-#     age = "c_age=101...191"
-#     gender = "gender=0"
-#     measures = "measures=20100"
-
-#     pop_ests_list = []
-
-#     # Chunk the query because API doesn't want long strings
-#     chunk_size = 100
-#     for i in tqdm.tqdm(range(0, len(london_msoas), chunk_size)):
-#         chunk = london_msoas[i:i + chunk_size]
-#         geography = 'geography=' + ','.join(chunk)
-#         query = base + geography + "&" + date + "&" + gender + "&" + age + "&" + measures
-
-#         req = requests.get(query)
-#         chunk_df = pd.read_csv(io.StringIO(req.content.decode('utf-8')))
-#         pop_ests_list.append(chunk_df)
-
-#     pop_ests = pd.concat(pop_ests_list, ignore_index=True)
-
-#     pop_ests.to_pickle(file)
-# else:
-#     print('Data already acquired. Loading it')
-#     with open(file, 'rb') as picklefile:
-#         pop_ests = pickle.load(picklefile)
-
-
-# pop_ests = janitor.clean_names(pop_ests)
-
-# # Drop unwanted columns
-# cols_to_keep = ['geography_name','geography_code','c_age','c_age_name','obs_value']
-
-# pop_ests = pop_ests[cols_to_keep]
-
-# # Get just under 16s and sum the population so we have 1 per msoa
-# pop_ests_u15 = pop_ests.loc[pop_ests['c_age'] <= 116]
-# pop_ests_u15 = pop_ests_u15.groupby(['geography_name','geography_code'])['obs_value'].sum().reset_index()
-
-# pop_ests_u15 = pop_ests_u15.rename(
-#     columns = {
-#         'geography_name':'msoa21nm',
-#         'geography_code':'msoa21cd',
-#         'obs_value':'population'
-#     }
-# )
-```
 
 ```{python}
 # NOMIS request is preferable but mis reuqest misses data for some reason
@@ -628,6 +575,8 @@ pop_ests['population'] = pop_ests[['age_aged_4_years_and_under','age_aged_5_to_9
 
 pop_ests = pop_ests[['msoa21nm','msoa21cd','population']]
 ```
+
+Lookup from msoa11 to msoa21
 
 ```{python}
 # Get MSOA11 to MSOA21 lookup
@@ -668,13 +617,13 @@ max_tries = 5
 all_results = []
 
 while True:
-    print(f"\nStarting page {rep}")
+    # print(f"\nStarting page {rep}")
     attempt = 1
     current_max_records = max_records
 
     while attempt <= max_tries:
-        print(f"\nAttempt {attempt}")
-        print(f"Trying with max records = {current_max_records}")
+        # print(f"\nAttempt {attempt}")
+        # print(f"Trying with max records = {current_max_records}")
 
         try:
             response = fetch_data(
@@ -683,18 +632,18 @@ while True:
                 result_offset=result_offset,
                 max_records=current_max_records
             )
-            print(f"\nSuccess with max records = {current_max_records}")
+            # print(f"\nSuccess with max records = {current_max_records}")
             break
 
         except Exception as e:
-            print(f"Error: {e}")
+            # print(f"Error: {e}")
             attempt += 1
             current_max_records = int(current_max_records / 2)
-            print("Retrying...")
+            # print("Retrying...")
             time.sleep(1)
 
     if attempt > max_tries:
-        print("Max attempts reached. Exiting...")
+        # print("Max attempts reached. Exiting...")
         break
 
     json_data = response.json()
@@ -717,7 +666,7 @@ while True:
 # Concatenate all chunks into a single pandas DataFrame
 if all_results:
     lookup = pd.concat(all_results, ignore_index=True)
-    print(lookup.head())
+    # print(lookup.head())
 
 lookup = janitor.clean_names(lookup)
 
@@ -736,7 +685,6 @@ relative2 = relative2.groupby(['msoa21cd'])['count'].sum()
 # result = relative2.groupby('msoa21cd', as_index=False).agg({'count': 'sum'})
 
 ```
-
 
 ```{python}
 # Join pop ests to CILIF data
@@ -780,8 +728,6 @@ absolute2['decile'] = pd.to_numeric(absolute2['decile'], errors='coerce')
 
 ```
 
-
-
 # Join neighbours with CILIF
 
 ```{python}
@@ -804,12 +750,23 @@ neighbors_gdf2 = (neighbors_gdf
 
 ```{python}
 # get lookup again
-with psycopg2.connect(**db_params) as con:
-    query = ''' SELECT DISTINCT msoa21cd, ladcd as lad21cd, ladnm 
-            FROM pcode_census21_lookup
-            '''
+data_dir = os.path.join('..','data')
+filepath = os.path.join(data_dir, 'msoa_lad_lookup21.pkl')
+if not os.path.isfile(filepath):
+    with psycopg2.connect(**db_params) as con:
+        query = ''' SELECT DISTINCT msoa21cd, ladcd as lad21cd, ladnm 
+                FROM pcode_census21_lookup
+                '''
 
-    msoa_lad_lookup = pd.read_sql(query, con=con)
+        msoa_lad_lookup = pd.read_sql(query, con=con)
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(msoa_lad_lookup, file)
+
+else:
+    with open(filepath, 'rb') as file:
+        msoa_lad_lookup = pickle.load(file)
+
 ```
 
 ```{python}
@@ -1054,22 +1011,18 @@ ax.set_axis_off()
 
 fig.savefig(os.path.join('..','outputs','tott_hs_1km_map.png'), dpi=300)
 
+
 ```
 
-## All stadia and 1km buffer 
-
-Reveals missing areas
-
-Possible cause:
-
-CILIF data is using 2011 MSOAs, population estimates are using 2021 MSOAs
-
-Can we get pop ests in 2011 units?
-
-Or we look up 2011 pop ests to 2021s
-
-
 ```{python}
+#| include: false
+
+# Reveals missing areas
+# Possible cause:
+# CILIF data is using 2011 MSOAs, population estimates are using 2021 MSOAs
+# Can we get pop ests in 2011 units?
+# Or we look up 2011 pop ests to 2021s
+
 for area, stadium in zip(las_stads.iloc[:,0], las_stads.iloc[:,1]):
     print(area + ':' + stadium)
     this_area_relative_gdf = neighbors_gdf2.loc[neighbors_gdf2['stadium']==stadium]
