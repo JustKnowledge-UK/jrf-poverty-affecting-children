@@ -1,7 +1,20 @@
 ---
-title: "Untitled"
-format: html
+title: "Households Below Average Income"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+execute: 
+  warning: false
+  message: false
 ---
+
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
 
 This script acquires Households Below Average Income by ethnicity from Stat Xplore API plots it.
 
@@ -14,8 +27,10 @@ import requests
 import json
 import configparser
 import matplotlib as mpl
+import os 
 
 config = configparser.ConfigParser()
+
 config.read(os.path.join('..', 'keys.ini'))
 api_key = dict(config['statxplore'])
 
@@ -26,6 +41,8 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 mpl.rcParams['font.family'] = 'Open Sans'
 mpl.rcParams['font.size'] = 16
 ```
+
+Get the data via the statxplore API
 
 ```{python}
 # Get the data via the statxplore API
@@ -95,13 +112,14 @@ response = requests.post(url, headers=headers, json=payload)
 # Check the response
 if response.status_code == 200:
     data = response.json()
-    print(json.dumps(data, indent=2))
+    # print(json.dumps(data, indent=2))
 else:
     print(f"Error {response.status_code}: {response.text}")
 
 
 ```
 
+Get the contents of the data and transform to a dataframe
 
 ```{python}
 import pandas as pd
@@ -144,7 +162,7 @@ values = flatten_cube(cubes)
 df = pd.DataFrame(combinations, columns=field_names[:len(combinations[0])])
 df['Value'] = values[:len(combinations)]  # ensure lengths match
 
-print(df.head())
+# print(df.head())
 
 cols = ['Ethnicity'] + [col for col in df.columns[1:]]
 cols[2] = '60 per cent median net income'
@@ -159,6 +177,8 @@ df.to_csv(os.path.join('..','data','test.csv'))
 
 
 ```
+
+Get three year average because statxplore says we should when using ethnicity
 
 ```{python}
 # Get three year average because statxplore says we should when using ethnicity
@@ -199,6 +219,8 @@ df2_wide.loc[df2_wide['Ethnicity']=='Total', 'Ethnicity'] = 'UK Overall' #
 
 df2_wide = df2_wide.sort_values(by='In low income - Percentage')
 ```
+
+Plot 
 
 ```{python}
 import matplotlib.pyplot as plt
