@@ -1,8 +1,21 @@
 ---
-title: "Untitled"
-format: html
+title: "House prices"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+execute: 
+  warning: false
+  message: false
 ---
 
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
+Here we plot house price deciles and change between 2000-2023. Data are proprietary which is why they are loaded from csv rather than a public source.
 
 ```{python}
 import pandas as pd
@@ -54,7 +67,7 @@ mpl.rcParams['font.family'] = 'Open Sans'
 mpl.rcParams['font.size'] = 16
 ```
 
-
+Get data and boundaries
 ```{python}
 # Loaod house price data
 data = pd.read_csv(os.path.join('..','data','house_price_deciles.csv'))
@@ -64,6 +77,8 @@ oas = data['oa21cd'].unique()
 
 formatted_list = ', '.join([f"'{oa}'" for oa in oas.tolist()])
 
+
+# Get output area boundaries
 path = os.path.join('..','data')
 filepath = path + 'oa_gdf.pkl'
 if not os.path.exists(filepath):
@@ -82,19 +97,28 @@ else:
         oa_gdf = pickle.load(file)
 
 data_gdf = oa_gdf.merge(data, how='right', on='oa21cd')
-```
 
-```{python}
 # Get NP boudnaires to higlhight
-with engine.connect() as con:
-    query = '''
-            SELECT msoa21cd, geometry
-            FROM msoa21_boundaries
-            WHERE msoa21cd = 'E02000398'
+data_dir = os.path.join('..','data')
+filepath = os.path.join(data_dir, 'np_boundaries.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        query = '''
+                SELECT msoa21cd, geometry
+                FROM msoa21_boundaries
+                WHERE msoa21cd = 'E02000398'
 
-    '''
-    np_gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
+        '''
+        np_gdf = gpd.read_postgis(query, con=con, geom_col='geometry')
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(np_gdf, file)
+else:
+    with open(filepath, 'rb') as file:
+        np_gdf = pickle.load(file)
 ```
+
+# Plot decile change 2000-2023
 
 ```{python}
 import matplotlib as mpl
@@ -176,7 +200,7 @@ plt.show()
 fig.savefig(os.path.join('..','outputs','house_price_change.png'), dpi=300, bbox_inches='tight')
 ```
 
-# 2023
+# Plot house price deciles in 2023
 
 ```{python}
 fig, ax = plt.subplots(figsize=[10, 10])
@@ -231,26 +255,38 @@ plt.show()
 fig.savefig(os.path.join('..','outputs','house_price_2023.png'), dpi=300, bbox_inches='tight')
 ```
 
+Get the percentage of Output areas in Northumberland Park in each decile
 
 ```{python}
-with engine.connect() as con:
-    query = '''SELECT DISTINCT oa21cd, msoa21cd
-    FROM pcode_census21_lookup 
-    WHERE msoa21cd = 'E02000398'
-    '''
-    
-    np_oas = pd.read_sql(sql=query, con=con)
+filepath = os.path.join(data_dir, 'np_oa_lookup.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        query = '''SELECT DISTINCT oa21cd, msoa21cd
+        FROM pcode_census21_lookup 
+        WHERE msoa21cd = 'E02000398'
+        '''
+        
+        np_oas = pd.read_sql(sql=query, con=con)
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(np_oas, file)
+
+else:
+    with open(filepath, 'rb') as file:
+        np_oas = pickle.load(file)
 
 np_oas_list = np_oas['oa21cd'].tolist()
 
 np_subset = data_gdf.loc[data_gdf['oa21cd'].isin(np_oas_list)]
 
 ranks_np_subset = np_subset['year_2023'].unique()
-print(ranks_np_subset)
+# print(ranks_np_subset)
 
 np_summary = np_subset.groupby('year_2023')['year_2023'].count()
-np_summary = np_summary.to_frame('count')  # optional: turn it back into a DataFrame
+np_summary = np_summary.to_frame('count').reset_index(drop=False)  # optional: turn it back into a DataFrame
 np_summary['percentage'] = np_summary['count'] / np_summary['count'].sum() * 100
+np_summary = np_summary.rename(columns={'year_2023': 'decile'})
 
+print(np_summary)
 
 ```
