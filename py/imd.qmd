@@ -1,13 +1,20 @@
 ---
 title: "IMD"
-author: Jolyon Miles-Wilson
-date: 2025-07-01
 format: 
     html:
-        embed-resource: true
         code-fold: true
-        warning: false
+        css: ../styles.css
+        embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
+
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
 
 This script plots the indices of deprivation for MSOAs within Haringey, highlighting the Northumberland Park MSOA. Indices of deprivation data can be retrieved from https://www.gov.uk/government/statistics/english-indices-of-deprivation-2019.
 
@@ -22,6 +29,7 @@ import matplotlib.pyplot as plt
 from sqlalchemy import create_engine
 import janitor
 import matplotlib as mpl
+import pickle
 
 # Load DB config
 config = configparser.ConfigParser()
@@ -46,197 +54,9 @@ mpl.rcParams['font.size'] = 16
 
 ```
 
-Read in the IoD data, a LSOA-MSOA lookup, and population estimates for aggregating using population weights.
+# IMD 2025
 
-Data sources:
-
-- IoD: https://www.gov.uk/government/statistics/english-indices-of-deprivation-2019
-- Lookup: https://geoportal.statistics.gov.uk/datasets/ons::output-area-2021-to-lsoas-to-msoas-to-lep-to-lad-may-2022-best-fit-lookup-in-en/about
-- Population estimates: https://www.nomisweb.co.uk/datasets/pestoa2021
-
-```{python}
-# Read IOD from treehouse
-with engine.connect() as con:
-    query = '''SELECT *
-                FROM iod_2019
-                '''
-
-    iod = pd.read_sql(query, con = con)
-
-    query2 = '''SELECT DISTINCT lsoa11cd, msoa11cd, lad21nm
-            FROM pcode_census11_lookup
-        '''
-    lookup = pd.read_sql(query2, con = con)
-
-    query3 = '''SELECT lsoa11cd, population 
-                FROM population_lsoa
-            '''
-
-    pop = pd.read_sql(query3, con=con)
-
-iod.columns = (
-    iod.columns
-    .str.replace(',', '', regex=True)   # Remove ','
-    .str.replace('index_idaci_','', regex=True) # Remove suffix for income affecting children
-    .str.replace('idaopi_','', regex=True) # Remove suffix for income affecting older people
-)
-
-```
-
-```{python}
-# Aggregate scores up to msoa
-iod = (iod
-    .merge(lookup, how='left',on='lsoa11cd')
-    .merge(pop, how='left', on='lsoa11cd')
-)
-cols = iod.columns[iod.columns.str.contains('score')]
-
-iod2 = iod.copy()
-
-# Multiply each score by population
-for col in cols:
-    iod2[col + '_weighted'] = iod2[col] * iod2['population']
-
-# Group by MSOA and sum the weighted scores and population
-grouped = iod2.groupby(['msoa11cd','lad21nm']).agg(
-    {col + '_weighted': 'sum' for col in cols} |
-    {'population': 'sum'}
-).reset_index()
-
-
-# Calculate weighted average, rank, and decile
-for col in cols:
-    avg_col = col + '_weighted_avg'
-    rank_col = col + '_rank'
-    decile_col = col + '_decile'
-
-    grouped[avg_col] = grouped[col + '_weighted'] / grouped['population']
-    grouped[rank_col] = grouped[avg_col].rank(method='min', ascending=False)
-    grouped[decile_col] = pd.qcut(grouped[rank_col], q=10, labels=range(1, 11), duplicates='drop')
-
-# Select final columns to keep
-iod_msoa = grouped[['msoa11cd', 'lad21nm'] + 
-                   [col + suffix for col in cols for suffix in ['_weighted_avg', '_rank', '_decile']]]
-
-
-```
-
-Plot IOD for Haringey, highlighting Northumberland Park MSOA in black and other Haringey MSOAs in grey.
-
-```{python}
-# Select subset of domains so plot isn't information overload
-domains_of_interest = [
-    'index_of_multiple_deprivation',
-    'income',
-    'employment',
-    'education_skills_and_training',
-    'health_deprivation_and_disability',
-    'crime',
-    'barriers_to_housing_and_services',
-    'living_environment',
-    'income_deprivation_affecting_children',
-    'income_deprivation_affecting_older_people',
-    'children_and_young_people_sub-domain',
-    'adult_skills_sub-domain',
-    'geographical_barriers_sub-domain',
-    'wider_barriers_sub-domain',
-    'indoors_sub-domain',
-    'outdoors_sub-domain',
-]
-
-# Reorder columns
-rank_cols = [
-    col for col in iod_msoa.columns
-    if 'rank' in col
-    and any(domain in col for domain in domains_of_interest)
-]
-
-
-iod_msoa_ranks = iod_msoa[['msoa11cd','lad21nm'] + rank_cols]
-
-
-haringey_ranks = iod_msoa_ranks[iod_msoa_ranks['lad21nm']=='Haringey']
-
-# Pivot longer
-haringey_ranks_long = haringey_ranks.melt(
-    id_vars = 'msoa11cd',
-    value_vars = rank_cols,
-    var_name = 'domain',
-    value_name = 'rank')
-
-# Clean up domain names (remove '_rank' suffix)
-haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rate_rank', '')
-haringey_ranks_long['domain'] = haringey_ranks_long['domain'].str.replace('_score_rank', '')
-# Make title case and swap underscores for spaces 
-domains_of_interest = haringey_ranks_long['domain'].unique()
-def clean_domain_name(domain):
-    return domain.replace('_', ' ').title()
-domain_dict = {domain: clean_domain_name(domain) for domain in domains_of_interest}
-# Apply the mapping to the dataframe
-haringey_ranks_long['clean_domain'] = haringey_ranks_long['domain'].map(domain_dict)
-
-# Specify the Northumberland Park MSOA
-np_msoas = ['E02000398']
-
-np_data = haringey_ranks_long[haringey_ranks_long['msoa11cd'].isin(np_msoas)]
-not_np_data = haringey_ranks_long[~haringey_ranks_long['msoa11cd'].isin(np_msoas)]
-
-# Create color list
-colors = ['black' if msoa in np_msoas else 'lightgrey' 
-        for msoa in haringey_ranks_long['msoa11cd']]
-
-max_rank = int(iod_msoa_ranks[rank_cols].max().max())
-
-# Get the bin edges for deciles
-# Create all ranks obejct
-all_ranks = range(1,max_rank) # 32844 + 1
-total_ranks = len(all_ranks)
-
-# Calculate decile boundaries (every 10%)
-decile_boundaries = []
-for i in range(0, 10):  # Deciles 1-9 (10th decile goes to the end)
-    boundary_index = int(i * total_ranks / 10)
-    decile_boundaries.append(all_ranks[boundary_index])
-
-# Add in the last edge
-decile_boundaries.append(max(all_ranks))
-
-fig, ax = plt.subplots(figsize=[6,6])
-
-# Plot grey points first (bottom layer)
-ax.scatter(not_np_data['rank'], not_np_data['clean_domain'], c='lightgrey')
-
-# Plot black points second (top layer)
-ax.scatter(np_data['rank'], np_data['clean_domain'], c='black')
-
-# Add vertical lines for decile boundaries
-for i, boundary in enumerate(decile_boundaries):
-    ax.axvline(
-        x=boundary, 
-        color='red', 
-        # linestyle=(0, (5, 10)), 
-        linestyle='dotted', 
-        alpha=0.7)
-    if i < 10:
-        x_loc = (decile_boundaries[i] + decile_boundaries[i+1]) / 2
-        ax.text(x=x_loc, y=ax.get_ylim()[0]*1.2, s=i+1, ha='center')
-
-plt.xlabel('Rank')
-
-ax.text(x=ax.get_xlim()[0], y=ax.get_ylim()[0]*1.2, s='Decile', ha='right')
-
-ax.text(x=ax.get_xlim()[1], y=ax.get_ylim()[1]*1.25, s='Black dots indicate Northumberland Park\nGrey dots represent other areas in Haringey', wrap=False, horizontalalignment='right', fontsize=10)
-ax.invert_yaxis()
-plt.tight_layout()
-# Add title with specific positioning
-# plt.title('Deprivation in Haringey', fontsize=14, x=0, y=1.05, ha='left')  # y controls vertical position
-plt.show()
-
-fig.savefig(os.path.join('..','outputs','deprivation.png'), dpi=800)
-```
-
-## IMD 2025
-
+Get the IMD 2025 data
 ```{python}
 
 data_dir = os.path.join('..','data')
@@ -305,16 +125,27 @@ iod25 = iod25.rename(
 iod25 = iod25[['lsoa21cd','lsoa21nm','lad24cd','lad24nm'] + cols + population_cols]
 ```
 
-```{python}
-with engine.connect() as con:
-    query = '''SELECT DISTINCT lsoa21cd, msoa21cd
-            FROM pcode_census21_lookup
-        '''
-    lookup21 = pd.read_sql(query, con = con)
+We need to aggregate to MSOA. First  load a lookup then
 
-```
+1. Create population weights (note some population denominators are specific populations, e.g. children, older people, employed people)
+2. Multiply LSOA scores by population weight
+2. Sum weighted scores of LSOAs for each MSOA
 
 ```{python}
+data_dir = os.path.join('..','data')
+filepath = os.path.join(data_dir, 'lsoa_msoa21_lookup.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        query = '''SELECT DISTINCT lsoa21cd, msoa21cd
+                FROM pcode_census21_lookup
+            '''
+        lookup21 = pd.read_sql(query, con = con)
+
+        with open(filepath, 'wb') as file:
+            pickle.dump(lookup21, file)
+else:
+    with open(filepath, 'rb') as file:
+        lookup21 = pickle.load(file)
 
 iod25_msoa = iod25.copy()
 
@@ -384,8 +215,9 @@ iod25_msoa = grouped[['msoa21cd','lad24cd','lad24nm'] +
 
 ```
 
-## IMD 2019
+# IMD 2019
 
+Do the same as above for 2019
 
 ```{python}
 data_dir = os.path.join('..','data')
@@ -429,18 +261,22 @@ iod19 = iod19.rename(
     })
 
 iod19 = iod19[['lsoa11cd','lsoa11nm','lad19cd','lad19nm'] + cols + population_cols]
-```
 
-```{python}
-with engine.connect() as con:
-    query = '''SELECT DISTINCT lsoa11cd, msoa11cd
-            FROM pcode_census11_lookup
-        '''
-    lookup11 = pd.read_sql(query, con = con)
+# Get lookup
+filepath = os.path.join(data_dir, 'lsoa_msoa11_lookup.pkl')
+if not os.path.isfile(filepath):
+    with engine.connect() as con:
+        query = '''SELECT DISTINCT lsoa11cd, msoa11cd
+                FROM pcode_census11_lookup
+            '''
+        lookup11 = pd.read_sql(query, con = con)
 
-```
+        with open(filepath, 'wb') as file:
+                pickle.dump(lookup11, file)
+else:
+    with open(filepath, 'rb') as file:
+        lookup11 = pickle.load(file)
 
-```{python}
 
 iod19_msoa = iod19.copy()
 
@@ -510,6 +346,8 @@ iod19_msoa = grouped[['msoa11cd','lad19cd','lad19nm'] +
 
 ```
 
+Quick sanity check that ranks are lower for higher scores
+
 ```{python}
 # aquick sanity check that ranks are lower for higher scores
 test_cols = [col for col in iod25_msoa.columns if 'index_of_multiple_deprivation_imd' in col]
@@ -517,9 +355,10 @@ test = iod25_msoa[['msoa21cd'] + test_cols]
 test.sort_values([col for col in test.columns if 'weighted_avg' in col])
 ```
 
+Get decile boundaries for 2019 and 2025 based on all data (i.e. not just haringey)
+
 ```{python}
 # Get decile boundaries based on all data
-
 rank_cols = [
     col for col in iod25_msoa.columns
     if 'rank' in col
@@ -571,10 +410,7 @@ decile_boundaries19.append(max(all_ranks))
 
 ```
 
-
-
-## Combine for Haringey
-
+Subset to Haringey and combine 2019 and 2025 into one dataframe.
 
 ```{python}
 haringey19 = iod19_msoa.loc[iod19_msoa['lad19nm'] == 'Haringey']
@@ -582,10 +418,9 @@ haringey25 = iod25_msoa.loc[iod25_msoa['lad24nm'] == 'Haringey']
 
 haringey19['year'] = 2019
 haringey25['year'] = 2025
-
-
 ```
 
+Get MSOA 11-21 lookup to check whether MSOAs in Haringey have changed between censuses. Luckily they haven't!
 
 ```{python}
 # get msoa11 to msoa21 lookup
@@ -653,6 +488,8 @@ msoa_lookup = janitor.clean_names(msoa_lookup)
 
 ```
 
+Check whether msoa11cds are equal to msoa21cds. They are. That makes things simpler!
+
 ```{python}
 haringey19 = haringey19.merge(msoa_lookup[['msoa11cd','msoa21cd']], how='left', on='msoa11cd')
 
@@ -660,21 +497,9 @@ haringey19 = haringey19.merge(msoa_lookup[['msoa11cd','msoa21cd']], how='left', 
 sum(haringey19['msoa11cd'] == haringey19['msoa21cd'])
 ```
 
+Some final tidying before plotting
 
 ```{python}
-# Select subset of domains so plot isn't information overload
-# domains_of_interest = [
-#     'income',
-#     'employment',
-#     'education_skills_and_training',
-#     'health_deprivation_and_disability',
-#     'crime',
-#     'barriers_to_housing_and_services',
-#     'living_environment',
-#     'income_deprivation_affecting_children',
-#     'income_deprivation_affecting_older_people'
-# ]
-
 # Reorder columns
 rank_cols = [
     col for col in haringey19.columns
@@ -741,10 +566,12 @@ imd_long = pd.concat([haringey19_ranks_long, haringey25_ranks_long], ignore_inde
 
 ```
 
+# Plot IMD25 and IMD19
+
 ```{python}
 import seaborn as sns
 import matplotlib.pyplot as plt
-
+np_msoas = ['E02000398']
 np_data = imd_long[imd_long['msoa21cd'].isin(np_msoas)].copy()
 
 # Pivot so we have a 2019 and 2025 column
