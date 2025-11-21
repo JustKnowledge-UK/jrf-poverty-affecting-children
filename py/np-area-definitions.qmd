@@ -1,7 +1,22 @@
 ---
-title: "Untitled"
-format: html
+title: "Northumberland Park and Tottenham definitions"
+format: 
+    html:
+        code-fold: true
+        css: ../styles.css
+        embed-resources: true
+execute: 
+  warning: false
+  message: false
 ---
+
+<div class="top-left-logo">
+  <a href="https://justknowledge.org.uk" target="_blank">
+    <img src="../assets/logo_transparent.png" alt="logo">
+  </a>
+</div>
+
+This script plots the different geographic definitions of Northumberland Park and Tottenham used in the report.
 
 ```{python}
 import requests
@@ -13,6 +28,7 @@ from sqlalchemy import create_engine
 import psycopg2
 import matplotlib as mpl
 import matplotlib.pyplot as plt
+import os
 
 # Load DB config
 config = configparser.ConfigParser()
@@ -36,7 +52,10 @@ plt.rcParams['font.family'] = 'Open Sans'
 plt.rcParams['font.size'] = 16    # size of the title
 ```
 
+Define function for fetching data from API
+
 ```{python}
+# Define function for fetching data from API
 def fetch_data(base_url, where_clause, result_offset, max_records):
     params = {
         "where": where_clause,       # Retrieve all records
@@ -183,6 +202,7 @@ geojson_data = response.text
 pc_gdf = gpd.read_file(io.StringIO(geojson_data))
 ```
 
+# Plot 
 
 ```{python}
 import contextily as cx
