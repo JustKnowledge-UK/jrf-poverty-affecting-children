@@ -8,6 +8,20 @@ body {
   color: black
 }
 
+
+.top-left-logo {
+  position: fixed;        /* stays at the top */
+  top: 20px;
+  left: 20px;
+  z-index: 1000;
+}
+
+.top-left-logo img {
+  height: 100px;           /* adjust size */
+  width: auto;
+}
+
+
 a,
 a:visited,
 .footnote-ref,
