@@ -51,7 +51,7 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 
 mpl.rcParams['font.family'] = 'Open Sans'
 mpl.rcParams['font.size'] = 16
-
+mpl.rcParams["figure.facecolor"] = jk_colours[5]
 ```
 
 # IMD 2025
@@ -123,6 +123,8 @@ iod25 = iod25.rename(
     })
 
 iod25 = iod25[['lsoa21cd','lsoa21nm','lad24cd','lad24nm'] + cols + population_cols]
+iod25.to_csv(os.path.join(data_dir,'iod25.csv'), index=False)
+
 ```
 
 We need to aggregate to MSOA. First  load a lookup then
