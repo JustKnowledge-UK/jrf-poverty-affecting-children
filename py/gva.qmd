@@ -55,6 +55,8 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 
 mpl.rcParams['font.family'] = 'Open Sans'
 mpl.rcParams['font.size'] = 16
+mpl.rcParams["figure.facecolor"] = jk_colours[5]
+
 
 data_dir = os.path.join('..','data')
 
@@ -467,7 +469,128 @@ plt.tight_layout()
 fig.savefig(os.path.join('..','outputs','gva_index_base' + str(base_year) + '.png'), dpi=300, bbox_inches='tight')
 ```
 
+Simplified version of above
+
+```{python}
+gva_indexed['midpoint'] = (gva_indexed['adjusted_gva_profit2_index'] + gva_indexed['adjusted_gva_revenue_index']) / 2
+gva_indexed['midpoint_raw'] = (gva_indexed['adjusted_gva_profit2'] + gva_indexed['adjusted_gva_revenue']) / 2
+
+# Plot
+fig, ax = plt.subplots(figsize=(8,8))
+
+lw = 3
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['gva_index'],
+    label='THS area: Total GVA',
+    color=jk_colours[0],
+    linewidth=lw
+)
+
+# Show estimated range as a shaded ribbon then plot midpoint line
+ax.fill_between(
+    gva_indexed['year'],
+    gva_indexed['adjusted_gva_revenue_index'],  # lower bound
+    gva_indexed['adjusted_gva_profit2_index'],  # upper bound
+    color=jk_colours[1],
+    alpha=0.25,
+    label='THS area: Possible values of GVA without THFC',
+    zorder=1
+)
+
+ax.plot(
+    gva_indexed['year'],
+    gva_indexed['midpoint'],
+    label='THS area: Estimated GVA without THFC',
+    color=jk_colours[1],
+    linewidth=lw,
+    zorder=2
+)
+
+
+# plot other msoas in haringey
+# for i, (_, group) in enumerate(other_areas_indexed.groupby('msoa11cd')):
+#     ax.plot(
+#         group['year'],
+#         group['gva_index'],
+#         label='Other MSOAs in Haringey' if i==0 else None,
+#         color='grey',
+#         alpha=0.2
+#     )
+
+# plot London
+ax.plot(
+    gva_london_indexed['year'],
+    gva_london_indexed['gva_index'],
+    label='London: Total GVA',
+    color=jk_colours[2],
+    linewidth=lw,
+    linestyle='solid'
+)
+
+
+ax.set_ylabel(f'GVA Index ({base_year} = 100)')
+ax.set_xlabel('Year', labelpad=20)
+# ax.set_title('Combined GVA of MSOAs in the 1km area around THS*')
+msoas = ", ".join(intersecting_msoas_list)
+
+# Get current handles and labels
+handles, labels = ax.get_legend_handles_labels()
+
+# Define your preferred order (by label name)
+if base_year == 2016:
+    order = [
+        'London: Total GVA',
+        'THS area: Total GVA',
+        'THS area: Estimated GVA without THFC',
+        'THS area: Possible values of GVA without THFC',
+
+        'Other MSOAs in Haringey'
+    ]
+elif base_year == 2018:
+    order = [
+        'THS area: GVA - THFC profit',
+        'London: Total GVA',
+        'THS area: Estimated GVA without THFC',
+        'THS area: Possible values of GVA without THFC',
+        'Other MSOAs in Haringey'
+
+    ]
+
+
+# Apply the order (filtering in case some labels don’t exist)
+handles = [h for _, h in sorted(zip(labels, handles), key=lambda x: order.index(x[0])) if _ in order]
+labels = [l for l in order if l in labels]
+
+ax.axhline(y=100, color=jk_colours[3],linestyle='dashed')
+# Plot legend in the new order
+ax.legend(handles, labels)
+
+ax.set_xticks(np.arange(base_year,2024,1));
+
+plt.tight_layout()
+
+fig.savefig(os.path.join('..','outputs','gva_index_base' + str(base_year) + '_simplified.png'), dpi=300, bbox_inches='tight')
+```
+
+```{python}
+# output gva data
+gva_indexed2 = gva_indexed[['year','gva_index','adjusted_gva_revenue_index','adjusted_gva_profit2_index','midpoint']].copy()
+gva_indexed2 = gva_indexed2.rename(columns={
+    'gva_index': 'ths_area_total_gva_index',
+    'adjusted_gva_revenue_index': 'gva_without_thfc_lower_bound_index',
+    'adjusted_gva_profit2_index': 'gva_without_thfc_upper_bound_index',
+    'midpoint': 'estimated_gva_without_thfc_index'
+})
+
+gva_indexed2.to_csv(os.path.join('..','outputs','gva_indexed2.csv'), index=False)
+```
+
+
 This plot is just GVA (i.e. it's not indexed to a base year)
+
+
 
 ```{python}
 fig, ax = plt.subplots(figsize=(8,8))
@@ -548,6 +671,31 @@ fig.savefig(os.path.join('..','outputs','ths_1km_msoas.png'), dpi=300, bbox_inch
 
 ```
 
+# alternative with just the outline
+
+```{python}
+import contextily as cx
+fig, ax1 = plt.subplots(figsize=(8,8))
+
+outline = intersecting_msoas_gdf.dissolve().boundary
+outline.plot(ax=ax1, edgecolor=jk_colours[0])
+
+tott.plot(ax=ax1, marker='o', color=jk_colours[2], markersize=30)
+
+cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax1.annotate(
+    xy=(0.99, -0.03),                
+    xycoords='axes fraction',   
+    text=f'Orange dot indicates location of THS',
+    ha='right',
+    size=10
+)
+
+ax1.set_axis_off()
+# ax1.set_title('*MSOAs included within the 1km area around THS')
+fig.savefig(os.path.join('..','outputs','outline_ths_1km_msoas.png'), dpi=300, bbox_inches='tight')
+
+```
 
 For convenience, also plot THS' location relative to Northumberland Park (for webinar slides)
 
@@ -572,3 +720,5 @@ ax1.set_axis_off()
 # ax1.set_title('*MSOAs included within the 1km area around THS')
 fig.savefig(os.path.join('..','outputs','ths_np.png'), dpi=300, bbox_inches='tight')
 ```
+
+
