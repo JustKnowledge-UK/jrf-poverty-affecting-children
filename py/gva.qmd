@@ -49,6 +49,21 @@ conn_str = (
 # Create engine
 engine = create_engine(conn_str)
 
+
+# Load DB config
+config_jk= configparser.ConfigParser()
+config_jk.read(os.path.join('..', 'db_config_jk.ini'))
+db_params_jk = dict(config_jk['postgresql'])
+
+# Build SQLAlchemy connection string
+conn_str_jk = (
+    f"postgresql+psycopg2://{db_params_jk['user']}:{db_params_jk['password']}"
+    f"@{db_params_jk['host']}:{db_params_jk['port']}/{db_params_jk['database']}"
+)
+
+# Create engine
+engine_jk = create_engine(conn_str_jk)
+
 # Colours
 with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
     jk_colours = [line.strip() for line in file]
@@ -60,6 +75,16 @@ mpl.rcParams["figure.facecolor"] = jk_colours[5]
 
 data_dir = os.path.join('..','data')
 
+# Get utility functions
+from pathlib import Path
+import sys
+
+project_root = Path.cwd().parent
+sys.path.insert(0, str(project_root))
+
+from utilities.write_with_pk import write_with_pk # this writes to db with primary key
+from utilities.set_file_location import set_file_location # this gets this file's location for create_record_cols
+from utilities.create_record_cols import create_record_cols # this sets the 3 record columns 'script', 'url', and 'date_acquired'
 ```
 
 
@@ -89,6 +114,10 @@ gva_msoa = gva_msoa.rename(
 )
 
 gva_msoa = gva_msoa[['msoa11cd','year','gva']]
+
+create_record_cols(gva_msoa, script_path = set_file_location(), url = 'https://www.nomisweb.co.uk/api/v01/dataset/NM_2400_1')
+
+write_with_pk(gva_msoa, 'gva_msoa', 'raw', ['msoa11cd','year'], engine_jk, if_exists='fail')
 ```
 
 Create a dataframe for THFC revenue and profit. These figures are taken from their annual reports: [https://www.tottenhamhotspur.com/the-club/investor-relations/annual-reports/](https://www.tottenhamhotspur.com/the-club/investor-relations/annual-reports/)
@@ -682,7 +711,7 @@ outline.plot(ax=ax1, edgecolor=jk_colours[0])
 
 tott.plot(ax=ax1, marker='o', color=jk_colours[2], markersize=30)
 
-cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
+# cx.add_basemap(ax=ax1, crs=intersecting_msoas_gdf.crs, source=cx.providers.CartoDB.Positron)
 ax1.annotate(
     xy=(0.99, -0.03),                
     xycoords='axes fraction',   
@@ -694,7 +723,7 @@ ax1.annotate(
 ax1.set_axis_off()
 # ax1.set_title('*MSOAs included within the 1km area around THS')
 fig.savefig(os.path.join('..','outputs','outline_ths_1km_msoas.png'), dpi=300, bbox_inches='tight')
-
+fig.savefig(os.path.join('..','outputs','outline_ths_1km_msoas.svg'), transparent=True, bbox_inches='tight')
 ```
 
 For convenience, also plot THS' location relative to Northumberland Park (for webinar slides)
