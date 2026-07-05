@@ -73,7 +73,7 @@ ice_cmap_rev = mcolors.LinearSegmentedColormap.from_list("ice", ice_swatch).reve
 
 plt.rcParams['font.family'] = 'Open Sans'   
 plt.rcParams['font.size'] = 16    # size of the title
-
+mpl.rcParams["figure.facecolor"] = jk_colours[5]
 data_dir = os.path.join('..','data')
 
 ```
@@ -387,6 +387,219 @@ ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.998, s='Red line indicates approxima
 
 plt.tight_layout()
 fig.savefig(os.path.join('..','outputs','cilif_haringey.png'), dpi=300, bbox_inches='tight')
+
+fig.savefig(os.path.join('..','outputs','cilif_haringey.svg'), transparent=True)
+```
+
+jet version of above (for launch event)
+
+```{python}
+cilif_haringey_2023 = cilif_london_long.loc[(cilif_london_long['year']=='2022/23') & (cilif_london_long['msoa21cd'].isin(haringey_msoas))]
+cilif_gdf = msoa_gdf.merge(cilif_haringey_2023, how='right', on='msoa21cd')
+
+# Clip ECM geometries to Haringey
+ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
+ecm = ecm.to_crs(haringey_gpd.crs)
+ecm_clipped = gpd.clip(ecm, haringey_gpd)
+
+# Get northumberland park centroid for plotting label
+np = cilif_gdf.loc[cilif_gdf['msoa21cd']=='E02000398']
+np['centroid'] = np.geometry.centroid
+
+# get muswell hill north and south and dissolve into one, then get centroid
+mh = cilif_gdf.loc[(cilif_gdf['msoa21cd']=='E02000417') | (cilif_gdf['msoa21cd']=='E02000410')]
+mh = mh.dissolve()
+mh['centroid'] = mh.geometry.centroid
+
+# Create Point in WGS84 (lon, lat)
+ally_point = Point(-0.131911, 51.594341)
+ally_pally = gpd.GeoDataFrame(geometry=[ally_point], crs="EPSG:4326")
+# Reproject ally_pally to the same CRS as cilif_gdf
+ally_pally = ally_pally.to_crs(cilif_gdf.crs)
+
+fig, ax = plt.subplots(figsize=[8, 8])
+
+# Plot the main layers
+cilif_gdf.plot(
+    ax=ax, 
+    column='percentage', 
+    legend=False, 
+    alpha=0.7, 
+    cmap='jet',
+    edgecolor='black',
+    linewidth=.5)
+# ecm_clipped.plot(ax=ax, color='red')
+cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax.set_axis_off()
+
+# Create a separate legend axis
+
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create a dummy mappable for the colorbar
+norm = mpl.colors.Normalize(vmin=cilif_gdf['percentage'].min(), vmax=cilif_gdf['percentage'].max())
+cmap = 'jet'
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm._A = []
+
+# Draw the colorbar in the new axes (same height)
+cbar = fig.colorbar(sm, cax=cax)
+cbar.set_label("Percentage")
+
+
+
+ally_pally.plot(ax=ax, marker='o',color='red', markersize=12, edgecolor='black',linewidth=0.5 )
+
+x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+nudge_x = x_range * .02
+y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+nudge_y = y_range * .02
+
+ax.text(
+    ally_pally.geometry.x - nudge_x,
+    ally_pally.geometry.y + nudge_y,
+    s='Alexandra\nPalace',
+    ha='left',
+    fontsize=10,
+    # fontweight='bold',
+    color='white'
+
+);
+
+ax.text(
+    mh['centroid'].x,
+    mh['centroid'].y - nudge_y,
+    s='Muswell Hill',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10,
+    color='white'
+);
+
+ax.text(
+    np['centroid'].x,
+    np['centroid'].y - nudge_y,
+    s='Northumberland\nPark',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10
+);
+
+
+
+# ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.998, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=10);
+
+plt.tight_layout()
+fig.savefig(os.path.join('..','outputs','cilif_haringey_jet.png'), dpi=300, bbox_inches='tight')
+fig.savefig(os.path.join('..','outputs','cilif_haringey_jet.svg'), transparent=True)
+
+
+```
+
+ice version wihtout ecm (launch event)
+
+```{python}
+cilif_haringey_2023 = cilif_london_long.loc[(cilif_london_long['year']=='2022/23') & (cilif_london_long['msoa21cd'].isin(haringey_msoas))]
+cilif_gdf = msoa_gdf.merge(cilif_haringey_2023, how='right', on='msoa21cd')
+
+# Clip ECM geometries to Haringey
+ecm = trainline.loc[trainline['track_names']=='East Coast Mainline']
+ecm = ecm.to_crs(haringey_gpd.crs)
+ecm_clipped = gpd.clip(ecm, haringey_gpd)
+
+# Get northumberland park centroid for plotting label
+np = cilif_gdf.loc[cilif_gdf['msoa21cd']=='E02000398']
+np['centroid'] = np.geometry.centroid
+
+# get muswell hill north and south and dissolve into one, then get centroid
+mh = cilif_gdf.loc[(cilif_gdf['msoa21cd']=='E02000417') | (cilif_gdf['msoa21cd']=='E02000410')]
+mh = mh.dissolve()
+mh['centroid'] = mh.geometry.centroid
+
+# Create Point in WGS84 (lon, lat)
+ally_point = Point(-0.131911, 51.594341)
+ally_pally = gpd.GeoDataFrame(geometry=[ally_point], crs="EPSG:4326")
+# Reproject ally_pally to the same CRS as cilif_gdf
+ally_pally = ally_pally.to_crs(cilif_gdf.crs)
+
+fig, ax = plt.subplots(figsize=[8, 8])
+
+# Plot the main layers
+cilif_gdf.plot(
+    ax=ax, 
+    column='percentage', 
+    legend=False, 
+    alpha=0.7, 
+    cmap=ice_cmap,
+    edgecolor='black',
+    linewidth=.5)
+# ecm_clipped.plot(ax=ax, color='red')
+cx.add_basemap(ax, crs=cilif_gdf.crs, source=cx.providers.CartoDB.Positron)
+ax.set_axis_off()
+
+# Create a separate legend axis
+
+divider = make_axes_locatable(ax)
+cax = divider.append_axes("right", size="5%", pad=0.1)
+
+# Create a dummy mappable for the colorbar
+norm = mpl.colors.Normalize(vmin=cilif_gdf['percentage'].min(), vmax=cilif_gdf['percentage'].max())
+cmap = ice_cmap
+sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+sm._A = []
+
+# Draw the colorbar in the new axes (same height)
+cbar = fig.colorbar(sm, cax=cax)
+cbar.set_label("Percentage")
+
+
+
+ally_pally.plot(ax=ax, marker='o',color='red', markersize=12, edgecolor='black',linewidth=0.5 )
+
+x_range = ax.get_xlim()[1] - ax.get_xlim()[0]
+nudge_x = x_range * .02
+y_range = ax.get_ylim()[1] - ax.get_ylim()[0]
+nudge_y = y_range * .02
+
+ax.text(
+    ally_pally.geometry.x - nudge_x,
+    ally_pally.geometry.y + nudge_y,
+    s='Alexandra\nPalace',
+    ha='left',
+    fontsize=10,
+    # fontweight='bold',
+    color='black'
+
+);
+
+ax.text(
+    mh['centroid'].x,
+    mh['centroid'].y - nudge_y,
+    s='Muswell Hill',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10,
+    color='black'
+);
+
+ax.text(
+    np['centroid'].x,
+    np['centroid'].y - nudge_y,
+    s='Northumberland\nPark',
+    ha='center',
+    # fontweight='bold',
+    fontsize=10
+);
+
+
+
+# ax.text(ax.get_xlim()[1], ax.get_ylim()[0]*.998, s='Red line indicates approximate position of the East Coast Main Line Railway', ha='right', size=10);
+
+plt.tight_layout()
+fig.savefig(os.path.join('..','outputs','cilif_haringey_wo_ecm.png'), dpi=300, bbox_inches='tight')
+
+fig.savefig(os.path.join('..','outputs','cilif_haringey_wo_ecm.svg'), transparent=True)
 ```
 
 ```{python}
