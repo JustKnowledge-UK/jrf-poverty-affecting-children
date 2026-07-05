@@ -35,6 +35,7 @@ with open(os.path.join('..', 'jk_primary_colours.txt'), 'r') as file:
 mpl.rcParams['font.family'] = 'Open Sans'
 
 mpl.rcParams['font.size'] = 16
+mpl.rcParams["figure.facecolor"] = jk_colours[5]
 
 # 1. Specify the url that downloads the data
 url = 'https://assets.publishing.service.gov.uk/media/67dc2c58c5528de3aa6711f9/children-in-low-income-families-local-area-statistics-2014-to-2024.ods'
